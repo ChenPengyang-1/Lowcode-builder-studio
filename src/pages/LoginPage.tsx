@@ -57,7 +57,6 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         <section className="login-brand-panel">
           <div className="login-panel-label">Project Login</div>
           <h1>低代码页面搭建平台</h1>
-          <p>这里主要演示登录页交互、会话保存和登录态控制，整体风格尽量保持简洁，和编辑器主体一致。</p>
 
           <div className={`login-orbit login-orbit-${mascotState}`}>
             <div className="login-orbit-ring" />
