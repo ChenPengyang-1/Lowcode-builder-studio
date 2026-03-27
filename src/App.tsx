@@ -16,6 +16,26 @@ import { getStoredThemeMode, persistThemeMode, type ThemeMode } from './utils/th
 
 type AppRoute = 'dashboard' | 'editor' | 'published' | 'settings';
 
+function renderProtectedRoute(
+  authSession: AuthSession | null,
+  themeMode: ThemeMode,
+  handleLogout: () => void,
+  handleThemeChange: (mode: ThemeMode) => void,
+) {
+  if (!authSession) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return (
+    <ProtectedApp
+      authSession={authSession}
+      themeMode={themeMode}
+      onLogout={handleLogout}
+      onThemeChange={handleThemeChange}
+    />
+  );
+}
+
 function getRouteFromPath(pathname: string): AppRoute | 'login' {
   if (pathname.startsWith('/dashboard')) return 'dashboard';
   if (pathname.startsWith('/published')) return 'published';
@@ -128,22 +148,10 @@ export default function App() {
         path="/login"
         element={authSession ? <Navigate to="/dashboard" replace /> : <LoginPage onLogin={handleLogin} />}
       />
-      <Route
-        path="/dashboard"
-        element={authSession ? <ProtectedApp authSession={authSession} themeMode={themeMode} onLogout={handleLogout} onThemeChange={handleThemeChange} /> : <Navigate to="/login" replace />}
-      />
-      <Route
-        path="/editor"
-        element={authSession ? <ProtectedApp authSession={authSession} themeMode={themeMode} onLogout={handleLogout} onThemeChange={handleThemeChange} /> : <Navigate to="/login" replace />}
-      />
-      <Route
-        path="/published"
-        element={authSession ? <ProtectedApp authSession={authSession} themeMode={themeMode} onLogout={handleLogout} onThemeChange={handleThemeChange} /> : <Navigate to="/login" replace />}
-      />
-      <Route
-        path="/settings"
-        element={authSession ? <ProtectedApp authSession={authSession} themeMode={themeMode} onLogout={handleLogout} onThemeChange={handleThemeChange} /> : <Navigate to="/login" replace />}
-      />
+      <Route path="/dashboard" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
+      <Route path="/editor" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
+      <Route path="/published" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
+      <Route path="/settings" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
       <Route path="*" element={<Navigate to={authSession ? '/dashboard' : '/login'} replace />} />
     </Routes>
   );
