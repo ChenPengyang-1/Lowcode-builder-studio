@@ -5,6 +5,7 @@ export default defineConfig({
     server: {
         proxy: {
             '/api': {
+                // Forward AI-related requests to the local Node.js service during development.
                 target: 'http://localhost:8787',
                 changeOrigin: true,
             },
