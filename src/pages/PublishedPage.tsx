@@ -76,11 +76,11 @@ function buildActionPrompt(messages: ChatMessage[], latestUserText: string, acti
 function createGenerateWelcome(capability: AssistantCapability): ChatMessage[] {
   if (capability === 'ai') {
     return [
-      {
-        id: makeId('assistant'),
-        role: 'assistant',
-        text: '当前已进入 AI 模式。你可以先像和 GPT 一样聊天，慢慢把目标聊清楚；只有你明确说开始生成时，我才会真正开始构建页面。',
-      },
+        {
+          id: makeId('assistant'),
+          role: 'assistant',
+          text: '当前已进入 AI 模式。你可以先像和 GPT 一样确认目标、模块和风格；只有你明确说“开始生成”时，我才会真正开始构建页面。',
+        },
     ];
   }
 
@@ -105,11 +105,11 @@ function createRefineWelcome(
 ): ChatMessage[] {
   if (capability === 'ai') {
     return [
-      {
-        id: makeId('assistant'),
-        role: 'assistant',
-        text: `当前已进入 AI 模式，我们可以围绕“${templateName}”继续聊天式调整。${schemaSummary}`,
-      },
+        {
+          id: makeId('assistant'),
+          role: 'assistant',
+          text: `当前已进入 AI 模式，我们可以围绕“${templateName}”继续聊天式调整。${schemaSummary}`,
+        },
     ];
   }
 
@@ -691,8 +691,8 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
                   ? `当前为 AI 模式，我们会像聊天一样围绕“${selectedTemplate.name}”继续确认和调整。只有你明确说“按这个改”或直接提出具体改动时，我才会真正更新模板。`
                   : '当前为 AI 模式，先在左侧选择一份模板，我会直接继续修改。'
                 : previewSchema
-                  ? '当前为 AI 模式，已经有一版结果了。你可以继续像聊天一样讨论方向；想让我真正改动时，直接说“按这个改”或者给出明确修改要求就可以。'
-                  : '当前为 AI 模式。你可以先像和 GPT 一样聊天确认目标；只有你明确说“开始生成”时，我才会真正开始构建页面。'
+                  ? '当前为 AI 模式，已经有一版结果了。你可以继续像聊天一样讨论方向；想让我真正改动时，直接说“按这个改”或给出明确修改要求即可。'
+                  : '当前为 AI 模式。你可以先像和 GPT 一样确认目标、模块和风格；只有你明确说“开始生成”时，我才会真正开始构建页面。'
               : assistantMode === 'refine'
                 ? selectedTemplate
                   ? `当前为引导模式，正在围绕“${selectedTemplate.name}”继续调整。`
@@ -755,11 +755,11 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
                 assistantMode === 'refine'
                   ? isAiMode
                     ? '先像聊天一样说出你的想法，比如“这个首屏有点正式，能再活一点吗”；想让我真正动手时，就直接说“按这个改”'
-                    : '继续描述你想怎么改这份模板，比如“表单增加公司规模和预算范围”'
-                  : isAiMode
-                    ? previewSchema
-                      ? '继续像聊天一样讨论或提出修改要求，比如“把首屏更有科技感一些”，确认后再说“按这个改”'
-                      : '先像聊天一样描述目标，比如“我想做一个面向企业客户的活动落地页”，确认后再说“开始生成”'
+                      : '继续描述你想怎么改这份模板，比如“表单增加公司规模和预算范围”'
+                    : isAiMode
+                      ? previewSchema
+                        ? '继续像聊天一样讨论或提出修改要求，比如“把首屏做得更有科技感”，确认后再说“按这个改”'
+                        : '先像聊天一样描述目标，比如“我想做一个面向企业客户的活动落地页”，确认后再说“开始生成”'
                     : generateStep === 'scene'
                       ? '先告诉我你想生成什么页面'
                       : generateStep === 'audience'
