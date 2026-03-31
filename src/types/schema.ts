@@ -56,4 +56,5 @@ export interface SavedTemplate {
   publishedSchema: PageSchema | null;
   updatedAt: string;
   publishedAt?: string | null;
+  source?: 'manual' | 'ai' | 'imported';
 }

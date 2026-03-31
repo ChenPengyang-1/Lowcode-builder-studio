@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+﻿import { create } from 'zustand';
 import type { ComponentValue, PageNode, PageSchema, SavedTemplate } from '../types/schema';
 import { materialRegistry } from '../materials/registry';
 import { createId } from '../utils/id';
@@ -74,7 +74,7 @@ function cloneSchema(schema: PageSchema): PageSchema {
   return JSON.parse(JSON.stringify(schema));
 }
 
-// 模板记录先存到本地，方便以前端原型的方式演示草稿/发布流程。
+// 模板记录先存到本地，方便前端原型演示草稿/发布流程。
 function loadTemplates(): SavedTemplate[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -128,7 +128,7 @@ function pushHistory(history: PageSchema[], schema: PageSchema) {
   return [...history, cloneSchema(schema)].slice(-50);
 }
 
-// 所有 Schema 变更都统一走这里，方便集中维护撤销栈和重做栈。
+// 所有 Schema 变更都统一走这里，便于集中维护撤销栈和重做栈。
 function applySchemaChange(
   state: EditorState,
   nextSchema: PageSchema,
@@ -148,7 +148,7 @@ function applySchemaChange(
 function cloneWithNewIds(node: PageNode): PageNode {
   const next: PageNode = deepCloneNode(node);
   next.id = createId(node.type);
-  next.name = `${node.name} 副本`;
+  next.name = `${node.name} 鍓湰`;
   if (next.children?.length) {
     next.children = next.children.map((child) => cloneWithNewIds(child));
   }
@@ -162,14 +162,14 @@ function updateTemplatesList(updater: (templates: SavedTemplate[]) => SavedTempl
 }
 
 function buildImportedTemplateName(baseName: string, templates: SavedTemplate[]) {
-  const normalizedBase = baseName.trim() || '导入模板';
+  const normalizedBase = baseName.trim() || '瀵煎叆妯℃澘';
   const existingNames = new Set(templates.map((item) => item.name));
 
   if (!existingNames.has(normalizedBase)) {
     return normalizedBase;
   }
 
-  const firstCandidate = `${normalizedBase}（导入）`;
+  const firstCandidate = `${normalizedBase}锛堝鍏ワ級`;
   if (!existingNames.has(firstCandidate)) {
     return firstCandidate;
   }
@@ -422,36 +422,38 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   saveAsTemplate: (name) => {
     const current = normalizeSchema(get().schema, { fallbackTitle: '未命名模板' });
     if (!current.ok) return;
-    const template: SavedTemplate = {
-      id: createId('tpl'),
-      name: name?.trim() || `${current.schema.pageMeta.title} 模板`,
-      draftSchema: cloneSchema(current.schema),
-      publishedSchema: null,
-      updatedAt: new Date().toISOString(),
-      publishedAt: null,
-    };
+      const template: SavedTemplate = {
+        id: createId('tpl'),
+        name: name?.trim() || `${current.schema.pageMeta.title} 妯℃澘`,
+        draftSchema: cloneSchema(current.schema),
+        publishedSchema: null,
+        updatedAt: new Date().toISOString(),
+        publishedAt: null,
+        source: 'manual',
+      };
     const templates = updateTemplatesList((prev) => [template, ...prev]);
     set({ templates, activeTemplateId: template.id });
   },
 
   createTemplateFromSchema: (schema, name) => {
-    const normalized = normalizeSchema(schema, { fallbackTitle: 'AI 模板' });
+      const normalized = normalizeSchema(schema, { fallbackTitle: 'AI 模板' });
     if (!normalized.ok) return '';
-    const template: SavedTemplate = {
-      id: createId('tpl'),
-      name: name?.trim() || `${normalized.schema.pageMeta.title} AI 模板`,
-      draftSchema: cloneSchema(normalized.schema),
-      publishedSchema: null,
-      updatedAt: new Date().toISOString(),
-      publishedAt: null,
-    };
+      const template: SavedTemplate = {
+        id: createId('tpl'),
+        name: name?.trim() || `${normalized.schema.pageMeta.title} AI 妯℃澘`,
+        draftSchema: cloneSchema(normalized.schema),
+        publishedSchema: null,
+        updatedAt: new Date().toISOString(),
+        publishedAt: null,
+        source: 'ai',
+      };
     const templates = updateTemplatesList((prev) => [template, ...prev]);
     set({ templates, activeTemplateId: template.id });
     return template.id;
   },
 
   updateTemplateDraft: (templateId) => {
-    const normalized = normalizeSchema(get().schema, { fallbackTitle: '草稿模板' });
+      const normalized = normalizeSchema(get().schema, { fallbackTitle: '草稿模板' });
     if (!normalized.ok) return;
     const current = cloneSchema(normalized.schema);
     const templates = updateTemplatesList((prev) =>
@@ -466,7 +468,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   // 发布时会把当前工作中的 Schema 同步成对外可用的发布快照。
   publishTemplate: (templateId) => {
-    const normalized = normalizeSchema(get().schema, { fallbackTitle: '发布模板' });
+      const normalized = normalizeSchema(get().schema, { fallbackTitle: '发布模板' });
     if (!normalized.ok) return;
     const current = cloneSchema(normalized.schema);
     const templates = updateTemplatesList((prev) =>
@@ -511,6 +513,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           publishedAt: normalizedTemplate.publishedSchema
             ? normalizedTemplate.publishedAt ?? new Date().toISOString()
             : null,
+          source: 'imported',
         };
 
         const templates = updateTemplatesList((prev) => [nextTemplate, ...prev]);
@@ -526,13 +529,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         };
       }
 
-      const normalizedSchema = normalizeSchema(parsed, { fallbackTitle: '导入模板' });
+      const normalizedSchema = normalizeSchema(parsed, { fallbackTitle: '瀵煎叆妯℃澘' });
       if (!normalizedSchema.ok) {
         return { ok: false, message: getSchemaImportMessage(normalizedSchema) };
       }
 
       const nextName = buildImportedTemplateName(
-        `${normalizedSchema.schema.pageMeta.title} 模板`,
+        `${normalizedSchema.schema.pageMeta.title} 妯℃澘`,
         currentTemplates,
       );
       const nextTemplate: SavedTemplate = {
@@ -542,6 +545,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         publishedSchema: null,
         updatedAt: new Date().toISOString(),
         publishedAt: null,
+        source: 'imported',
       };
 
       const templates = updateTemplatesList((prev) => [nextTemplate, ...prev]);
@@ -627,3 +631,4 @@ export function useSelectedNode(): PageNode | null {
   if (!selectedId) return null;
   return findNode(schema.nodes, selectedId);
 }
+

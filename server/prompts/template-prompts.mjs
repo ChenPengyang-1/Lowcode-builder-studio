@@ -39,6 +39,63 @@ export function buildChatMessages(message, currentSchema) {
   ];
 }
 
+export function buildChatReplyMessages(message, currentSchema) {
+  return [
+    {
+      role: 'system',
+      content: [
+        '你是低代码页面搭建平台里的对话式 AI 助手，要像 GPT 一样自然交流，帮助用户逐步明确页面目标。',
+        '这一步只负责自然聊天回复，不负责输出结构化 JSON。',
+        '如果用户只是提问、确认方向、补充需求、问你是什么模型或你能做什么，请正常回答。',
+        '如果用户已经开始描述页面需求，请像产品搭建助手一样帮助用户确认目标、补充建议或提示下一步。',
+        '回复要自然、简洁、有陪伴感，不要写成系统提示或表单引导语。',
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: [
+        `当前平台支持的区块类型：${supportedSectionTypes.join('、')}。`,
+        currentSchema
+          ? ['当前已经有一版页面 Schema，可视为当前正在修改的页面：', JSON.stringify(currentSchema, null, 2)].join('\n')
+          : '当前还没有生成出的页面结果。',
+        '请根据下面这条用户消息继续对话：',
+        message,
+      ].join('\n'),
+    },
+  ];
+}
+
+export function buildChatDecisionMessages(message, currentSchema, reply) {
+  return [
+    {
+      role: 'system',
+      content: [
+        '你是低代码页面搭建平台里的对话式 AI 助手，要根据用户输入和已经给出的回复，判断下一步动作。',
+        '你要返回结构化结果：reply、intent、actionPrompt。',
+        'intent 只能是 chat、generate、refine 三种之一。',
+        '如果用户只是提问、确认方向、补充需求、闲聊、问你是什么模型或你能做什么，intent 设为 chat。',
+        '如果用户已经明确要你开始生成一版页面，intent 才设为 generate。',
+        '如果当前已经有页面结果，且用户明确要你基于当前结果继续修改，intent 才设为 refine。',
+        '当 intent 为 generate 或 refine 时，actionPrompt 需要整理成一段完整、清晰、适合后续结构化生成或修改的中文指令；当 intent 为 chat 时，actionPrompt 设为空字符串。',
+        'reply 请原样返回，不要改写。',
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: [
+        `当前平台支持的区块类型：${supportedSectionTypes.join('、')}。`,
+        currentSchema
+          ? ['当前已经有一版页面 Schema，可视为当前正在修改的页面：', JSON.stringify(currentSchema, null, 2)].join('\n')
+          : '当前还没有生成出的页面结果。',
+        '用户原始消息：',
+        message,
+        '你已经给出的回复：',
+        reply,
+      ].join('\n'),
+    },
+  ];
+}
+
 export function buildGenerateMessages(prompt) {
   return [
     {

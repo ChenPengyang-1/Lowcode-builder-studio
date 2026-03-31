@@ -2240,6 +2240,27 @@ select:focus {
   margin: 10px 0 12px;
 }
 
+.template-filter-stack {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.template-filter-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.template-filter-stack input,
+.template-filter-row select {
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(248, 250, 252, 0.86);
+  color: #0f172a;
+}
+
 .template-active-box.compact,
 .template-card {
   padding: 12px;
@@ -2300,6 +2321,34 @@ select:focus {
   font-size: 12px;
   margin-top: 6px;
   margin-bottom: 8px;
+}
+
+.template-tag-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.template-source-tag,
+.template-status-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.template-source-tag {
+  background: rgba(219, 234, 254, 0.9);
+  color: #1d4ed8;
+}
+
+.template-status-tag {
+  background: rgba(226, 232, 240, 0.72);
+  color: #475569;
 }
 
 .node-draggable-shell {
@@ -2459,6 +2508,10 @@ select:focus {
 .published-sidebar,
 .ai-assistant-panel {
   padding: 18px;
+}
+
+.published-filter-stack {
+  margin-top: 14px;
 }
 
 .published-section-title,

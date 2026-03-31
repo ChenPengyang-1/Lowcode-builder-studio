@@ -4,14 +4,41 @@ import express from 'express';
 import {
   generateTemplateWithAI,
   refineTemplateWithAI,
+  streamGenerateTemplateWithAI,
+  streamRefineTemplateWithAI,
 } from './services/openai-template-service.mjs';
-import { chatTemplateWithAI } from './services/openai-template-chat-service.mjs';
+import { chatTemplateWithAI, streamChatTemplateWithAI } from './services/openai-template-chat-service.mjs';
 
 const app = express();
 const port = Number(process.env.AI_SERVER_PORT || 8787);
 
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+
+function initSse(res) {
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+}
+
+function writeSse(res, event, data) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function endSse(res) {
+  res.write('event: done\n');
+  res.write('data: {}\n\n');
+  res.end();
+}
+
+function writeSseError(res, error) {
+  writeSse(res, 'error', {
+    message: error?.message || 'AI 服务调用失败。',
+  });
+  endSse(res);
+}
 
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -23,12 +50,30 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.post('/api/ai/template/generate', async (req, res, next) => {
-  try {
-    const { prompt, previousResponseId } = req.body ?? {};
-    if (!prompt || typeof prompt !== 'string') {
-      return res.status(400).json({ ok: false, message: 'prompt 不能为空。' });
-    }
+  const { prompt, previousResponseId } = req.body ?? {};
+  if (!prompt || typeof prompt !== 'string') {
+    return res.status(400).json({ ok: false, message: 'prompt 不能为空。' });
+  }
 
+  if (req.headers.accept?.includes('text/event-stream')) {
+    initSse(res);
+    try {
+      writeSse(res, 'status', { text: '已连接生成服务，正在准备页面蓝图...' });
+      const result = await streamGenerateTemplateWithAI({
+        prompt,
+        previousResponseId,
+        onStatus(text) {
+          writeSse(res, 'status', { text });
+        },
+      });
+      writeSse(res, 'result', result);
+      return endSse(res);
+    } catch (error) {
+      return writeSseError(res, error);
+    }
+  }
+
+  try {
     const result = await generateTemplateWithAI({ prompt, previousResponseId });
     return res.json(result);
   } catch (error) {
@@ -37,12 +82,31 @@ app.post('/api/ai/template/generate', async (req, res, next) => {
 });
 
 app.post('/api/ai/template/chat', async (req, res, next) => {
-  try {
-    const { message, previousResponseId, currentSchema } = req.body ?? {};
-    if (!message || typeof message !== 'string') {
-      return res.status(400).json({ ok: false, message: 'message 不能为空。' });
-    }
+  const { message, previousResponseId, currentSchema } = req.body ?? {};
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ ok: false, message: 'message 不能为空。' });
+  }
 
+  if (req.headers.accept?.includes('text/event-stream')) {
+    initSse(res);
+    try {
+      writeSse(res, 'status', { text: 'AI 已连接，正在生成回复...' });
+      const result = await streamChatTemplateWithAI({
+        message,
+        previousResponseId,
+        currentSchema,
+        onTextDelta(text) {
+          writeSse(res, 'reply_delta', { text });
+        },
+      });
+      writeSse(res, 'result', result);
+      return endSse(res);
+    } catch (error) {
+      return writeSseError(res, error);
+    }
+  }
+
+  try {
     const result = await chatTemplateWithAI({ message, previousResponseId, currentSchema });
     return res.json(result);
   } catch (error) {
@@ -51,15 +115,34 @@ app.post('/api/ai/template/chat', async (req, res, next) => {
 });
 
 app.post('/api/ai/template/refine', async (req, res, next) => {
-  try {
-    const { prompt, baseSchema, previousResponseId } = req.body ?? {};
-    if (!prompt || typeof prompt !== 'string') {
-      return res.status(400).json({ ok: false, message: 'prompt 不能为空。' });
-    }
-    if (!baseSchema || typeof baseSchema !== 'object') {
-      return res.status(400).json({ ok: false, message: 'baseSchema 不能为空。' });
-    }
+  const { prompt, baseSchema, previousResponseId } = req.body ?? {};
+  if (!prompt || typeof prompt !== 'string') {
+    return res.status(400).json({ ok: false, message: 'prompt 不能为空。' });
+  }
+  if (!baseSchema || typeof baseSchema !== 'object') {
+    return res.status(400).json({ ok: false, message: 'baseSchema 不能为空。' });
+  }
 
+  if (req.headers.accept?.includes('text/event-stream')) {
+    initSse(res);
+    try {
+      writeSse(res, 'status', { text: '已连接修改服务，正在理解当前页面...' });
+      const result = await streamRefineTemplateWithAI({
+        prompt,
+        baseSchema,
+        previousResponseId,
+        onStatus(text) {
+          writeSse(res, 'status', { text });
+        },
+      });
+      writeSse(res, 'result', result);
+      return endSse(res);
+    } catch (error) {
+      return writeSseError(res, error);
+    }
+  }
+
+  try {
     const result = await refineTemplateWithAI({ prompt, baseSchema, previousResponseId });
     return res.json(result);
   } catch (error) {

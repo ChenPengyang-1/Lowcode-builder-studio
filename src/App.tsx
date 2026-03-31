@@ -115,11 +115,6 @@ export default function App() {
   }, [themeMode]);
 
   useEffect(() => {
-    if (route === 'login' && authSession) {
-      navigate('/dashboard', { replace: true });
-      return;
-    }
-
     if (route !== 'login' && !authSession) {
       navigate('/login', { replace: true });
     }
@@ -146,13 +141,13 @@ export default function App() {
     <Routes>
       <Route
         path="/login"
-        element={authSession ? <Navigate to="/dashboard" replace /> : <LoginPage onLogin={handleLogin} />}
+        element={<LoginPage onLogin={handleLogin} />}
       />
       <Route path="/dashboard" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
       <Route path="/editor" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
       <Route path="/published" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
       <Route path="/settings" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
-      <Route path="*" element={<Navigate to={authSession ? '/dashboard' : '/login'} replace />} />
+      <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
 }

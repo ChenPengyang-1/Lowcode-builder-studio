@@ -1,7 +1,11 @@
 ﻿import OpenAI from 'openai';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
-import { buildChatMessages } from '../prompts/template-prompts.mjs';
+import {
+  buildChatDecisionMessages,
+  buildChatMessages,
+  buildChatReplyMessages,
+} from '../prompts/template-prompts.mjs';
 
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 const client = process.env.OPENAI_API_KEY
@@ -34,13 +38,21 @@ function getParsedOutput(response) {
   );
 }
 
+function extractReplyText(response) {
+  return (
+    response.output_text?.trim() ??
+    response.output?.[0]?.content?.find((item) => item.type === 'output_text')?.text?.trim() ??
+    ''
+  );
+}
+
 export async function chatTemplateWithAI({ message, previousResponseId, currentSchema }) {
   ensureClient();
 
   const response = await client.responses.parse({
     model,
     input: buildChatMessages(message, currentSchema),
-    previous_response_id: previousResponseId || undefined,
+    previous_response_id: streamedResponse.id || previousResponseId || undefined,
     max_output_tokens: 220,
     text: {
       format: zodTextFormat(templateChatDecisionSchema, templateChatDecisionFormatName),
@@ -63,3 +75,59 @@ export async function chatTemplateWithAI({ message, previousResponseId, currentS
     model,
   };
 }
+
+export async function streamChatTemplateWithAI({
+  message,
+  previousResponseId,
+  currentSchema,
+  onTextDelta,
+}) {
+  ensureClient();
+
+  const stream = client.responses.stream({
+    model,
+    input: buildChatReplyMessages(message, currentSchema),
+    previous_response_id: streamedResponse.id || previousResponseId || undefined,
+    max_output_tokens: 260,
+  });
+
+  stream.on('response.output_text.delta', (event) => {
+    onTextDelta?.(event.delta);
+  });
+
+  const streamedResponse = await stream.finalResponse();
+  const reply = extractReplyText(streamedResponse);
+
+  if (!reply) {
+    const error = new Error('AI 没有返回有效的聊天内容。');
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const decisionResponse = await client.responses.parse({
+    model,
+    input: buildChatDecisionMessages(message, currentSchema, reply),
+    previous_response_id: streamedResponse.id || previousResponseId || undefined,
+    max_output_tokens: 120,
+    text: {
+      format: zodTextFormat(templateChatDecisionSchema, templateChatDecisionFormatName),
+    },
+  });
+
+  const parsed = getParsedOutput(decisionResponse);
+  if (!parsed) {
+    const error = new Error('AI 没有返回可解析的对话结果。');
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return {
+    ok: true,
+    reply,
+    intent: parsed.intent,
+    actionPrompt: parsed.intent === 'chat' ? '' : parsed.actionPrompt,
+    responseId: decisionResponse.id || streamedResponse.id,
+    model,
+  };
+}
+

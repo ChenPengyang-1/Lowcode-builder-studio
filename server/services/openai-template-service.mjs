@@ -6,7 +6,10 @@ import { buildGenerateMessages, buildRefineMessages } from '../prompts/template-
 
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 const client = process.env.OPENAI_API_KEY
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  ? new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      timeout: 45000,
+    })
   : null;
 
 function ensureClient() {
@@ -51,8 +54,33 @@ async function requestBlueprint(messages, previousResponseId) {
   };
 }
 
+async function requestBlueprintWithStatus(messages, previousResponseId, onStatus) {
+  onStatus?.('正在整理你的需求，并规划页面结构...');
+  const result = await requestBlueprint(messages, previousResponseId);
+  onStatus?.('页面结构已经生成，正在映射为可编辑的 Schema...');
+  return result;
+}
+
 export async function generateTemplateWithAI({ prompt, previousResponseId }) {
   const result = await requestBlueprint(buildGenerateMessages(prompt), previousResponseId);
+
+  return {
+    ok: true,
+    mode: 'generate',
+    summary: result.blueprint.summary,
+    suggestions: result.blueprint.suggestions,
+    schema: result.schema,
+    responseId: result.responseId,
+    model,
+  };
+}
+
+export async function streamGenerateTemplateWithAI({ prompt, previousResponseId, onStatus }) {
+  const result = await requestBlueprintWithStatus(
+    buildGenerateMessages(prompt),
+    previousResponseId,
+    onStatus,
+  );
 
   return {
     ok: true,
@@ -69,6 +97,29 @@ export async function refineTemplateWithAI({ prompt, baseSchema, previousRespons
   const result = await requestBlueprint(
     buildRefineMessages(prompt, baseSchema),
     previousResponseId,
+  );
+
+  return {
+    ok: true,
+    mode: 'refine',
+    summary: result.blueprint.summary,
+    suggestions: result.blueprint.suggestions,
+    schema: result.schema,
+    responseId: result.responseId,
+    model,
+  };
+}
+
+export async function streamRefineTemplateWithAI({
+  prompt,
+  baseSchema,
+  previousResponseId,
+  onStatus,
+}) {
+  const result = await requestBlueprintWithStatus(
+    buildRefineMessages(prompt, baseSchema),
+    previousResponseId,
+    onStatus,
   );
 
   return {

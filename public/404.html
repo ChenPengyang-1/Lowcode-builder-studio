@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Redirecting...</title>
+    <script>
+      (function redirectSpaRoute() {
+        const pathname = window.location.pathname;
+        const basePath = pathname.endsWith('/404.html')
+          ? pathname.slice(0, -'/404.html'.length) || '/'
+          : '/';
+        const relativePath = pathname.startsWith(basePath)
+          ? pathname.slice(basePath.length - 1)
+          : pathname;
+        const target = `${basePath}?redirect=${encodeURIComponent(relativePath + window.location.search + window.location.hash)}`;
+
+        window.location.replace(target);
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>

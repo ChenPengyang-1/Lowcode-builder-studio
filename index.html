@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>低代码搭建平台</title>
+    <script>
+      (function restoreSpaLocation() {
+        const currentUrl = new URL(window.location.href);
+        const redirect = currentUrl.searchParams.get('redirect');
+
+        if (!redirect) return;
+
+        currentUrl.searchParams.delete('redirect');
+        const remainingQuery = currentUrl.searchParams.toString();
+        const nextUrl = `${redirect}${remainingQuery ? `?${remainingQuery}` : ''}`;
+        window.history.replaceState(null, '', nextUrl);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

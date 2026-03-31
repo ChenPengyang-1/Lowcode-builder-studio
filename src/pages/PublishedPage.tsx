@@ -9,7 +9,11 @@ import {
   summarizeSchema,
   type AiTemplateResult,
 } from '../utils/aiStudio';
-import { chatTemplateByAI, generateTemplateByAI, refineTemplateByAI } from '../utils/aiApi';
+import {
+  chatTemplateByAIStream,
+  generateTemplateByAIStream,
+  refineTemplateByAIStream,
+} from '../utils/aiApi';
 import { parseImportedJson, TEMPLATE_FILE_TYPE, triggerFileDownload } from '../utils/templateTransfer';
 
 interface ChatMessage {
@@ -17,6 +21,9 @@ interface ChatMessage {
   role: 'assistant' | 'user';
   text: string;
 }
+
+type TemplateSort = 'updated' | 'published' | 'name';
+type TemplateSourceFilter = 'all' | 'manual' | 'ai' | 'imported';
 
 type AssistantMode = 'generate' | 'refine';
 type AssistantCapability = 'checking' | 'ai' | 'fallback';
@@ -56,6 +63,12 @@ function buildGeneratePrompt(intent: GenerateIntent) {
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getTemplateSourceLabel(source: 'manual' | 'ai' | 'imported' | undefined) {
+  if (source === 'ai') return 'AI 生成';
+  if (source === 'imported') return '导入模板';
+  return '手工搭建';
 }
 
 function buildActionPrompt(messages: ChatMessage[], latestUserText: string, action: 'generate' | 'refine') {
@@ -143,6 +156,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const templateCardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const lastImportedTemplateIdRef = useRef<string | null>(null);
+  const messagesRef = useRef<ChatMessage[]>([]);
 
   const [assistantMode, setAssistantMode] = useState<AssistantMode>('generate');
   const [assistantCapability, setAssistantCapability] = useState<AssistantCapability>('checking');
@@ -162,6 +176,9 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
   });
   const [generatedResult, setGeneratedResult] = useState<AiTemplateResult | null>(null);
   const [refinedResult, setRefinedResult] = useState<AiTemplateResult | null>(null);
+  const [templateKeyword, setTemplateKeyword] = useState('');
+  const [templateSourceFilter, setTemplateSourceFilter] = useState<TemplateSourceFilter>('all');
+  const [templateSortBy, setTemplateSortBy] = useState<TemplateSort>('published');
 
   const publishedTemplates = useMemo(
     () =>
@@ -173,6 +190,30 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
       ),
     [templates, selectedTemplateId],
   );
+  const filteredPublishedTemplates = useMemo(() => {
+    const normalizedKeyword = templateKeyword.trim().toLowerCase();
+
+    return [...publishedTemplates]
+      .filter((template) =>
+        normalizedKeyword ? template.name.toLowerCase().includes(normalizedKeyword) : true,
+      )
+      .filter((template) =>
+        templateSourceFilter === 'all'
+          ? true
+          : (template.source ?? 'manual') === templateSourceFilter,
+      )
+      .sort((left, right) => {
+        if (templateSortBy === 'name') {
+          return left.name.localeCompare(right.name, 'zh-CN');
+        }
+
+        if (templateSortBy === 'updated') {
+          return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+        }
+
+        return new Date(right.publishedAt ?? 0).getTime() - new Date(left.publishedAt ?? 0).getTime();
+      });
+  }, [publishedTemplates, templateKeyword, templateSourceFilter, templateSortBy]);
 
   const selectedTemplate = publishedTemplates.find((item) => item.id === selectedTemplateId) ?? null;
   const selectedTemplateSchema = selectedTemplate?.publishedSchema ?? selectedTemplate?.draftSchema ?? null;
@@ -207,6 +248,24 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
 
   const pushMessage = (role: 'assistant' | 'user', text: string) => {
     setMessages((prev) => [...prev, { id: makeId(role), role, text }]);
+  };
+
+  const createAssistantStreamMessage = () => {
+    const id = makeId('assistant');
+    setMessages((prev) => [...prev, { id, role: 'assistant', text: '' }]);
+    return id;
+  };
+
+  const setAssistantMessageText = (id: string, text: string) => {
+    setMessages((prev) => prev.map((message) => (message.id === id ? { ...message, text } : message)));
+  };
+
+  const appendAssistantMessageText = (id: string, chunk: string) => {
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === id ? { ...message, text: `${message.text}${chunk}` } : message,
+      ),
+    );
   };
 
   const resetToGenerateMode = () => {
@@ -254,42 +313,75 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     const value = content.trim();
     if (!value) return;
 
+    const nextMessages = [...messagesRef.current, { id: makeId('user'), role: 'user' as const, text: value }];
     pushMessage('user', value);
     setAssistantBusy(true);
+    const streamMessageId = createAssistantStreamMessage();
 
     try {
-      const chatResult = await chatTemplateByAI({
+      const chatResult = await chatTemplateByAIStream({
         message: value,
         currentSchema: activeConversationSchema,
         previousResponseId,
+      }, {
+        onStatus: (text) => {
+          if (!text) return;
+          setAssistantMessageText(streamMessageId, text);
+        },
+        onReplyDelta: (text) => {
+          if (!text) return;
+          appendAssistantMessageText(streamMessageId, text);
+        },
       });
+
       setPreviousResponseId(chatResult.responseId ?? null);
-      pushMessage('assistant', chatResult.reply);
+      setAssistantMessageText(streamMessageId, chatResult.reply);
 
       if (chatResult.intent === 'generate' && chatResult.actionPrompt.trim()) {
-        const result = await generateTemplateByAI({
-          prompt: buildActionPrompt(messages, chatResult.actionPrompt, 'generate'),
+        const generationMessageId = createAssistantStreamMessage();
+        const result = await generateTemplateByAIStream({
+          prompt: buildActionPrompt(nextMessages, chatResult.actionPrompt, 'generate'),
           previousResponseId: chatResult.responseId ?? previousResponseId,
+        }, {
+          onStatus: (text) => {
+            if (!text) return;
+            setAssistantMessageText(generationMessageId, text);
+          },
         });
         setPreviousResponseId(result.responseId ?? chatResult.responseId ?? null);
         setGeneratedResult(result);
         setRefinedResult(null);
-        pushMessage('assistant', '我已经开始把刚才确认好的方向落成页面草稿，左侧预览已经同步更新。接下来我们可以继续围绕这版结果慢慢调整。');
+        setAssistantMessageText(
+          generationMessageId,
+          '我已经把刚才确认好的方向落成页面草稿，左侧预览已经同步更新。接下来我们可以继续围绕这版结果慢慢调整。',
+        );
         return;
       }
 
       if (chatResult.intent === 'refine' && chatResult.actionPrompt.trim() && activeConversationSchema) {
-        const result = await refineTemplateByAI({
-          prompt: buildActionPrompt(messages, chatResult.actionPrompt, 'refine'),
+        const refineMessageId = createAssistantStreamMessage();
+        const result = await refineTemplateByAIStream({
+          prompt: buildActionPrompt(nextMessages, chatResult.actionPrompt, 'refine'),
           baseSchema: activeConversationSchema,
           previousResponseId: chatResult.responseId ?? previousResponseId,
+        }, {
+          onStatus: (text) => {
+            if (!text) return;
+            setAssistantMessageText(refineMessageId, text);
+          },
         });
         setPreviousResponseId(result.responseId ?? chatResult.responseId ?? null);
         setRefinedResult(result);
-        pushMessage('assistant', '我已经按刚才聊定的方向更新了当前页面，左侧预览也一起刷新了。你可以继续提想法，我会继续陪你往下调。');
+        setAssistantMessageText(
+          refineMessageId,
+          '我已经按刚才聊定的方向更新了当前页面，左侧预览也一起刷新了。你可以继续提想法，我会继续陪你往下调。',
+        );
       }
     } catch (error) {
-      pushMessage('assistant', `这次对话失败了，请重试。${error instanceof Error ? `原因：${error.message}` : ''}`.trim());
+      setAssistantMessageText(
+        streamMessageId,
+        `这次对话失败了，请重试。${error instanceof Error ? `原因：${error.message}` : ''}`.trim(),
+      );
     } finally {
       setAssistantBusy(false);
     }
@@ -350,21 +442,27 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
 
     pushMessage('user', value);
     setAssistantBusy(true);
+    const streamMessageId = createAssistantStreamMessage();
 
     let result: AiTemplateResult;
     try {
-      const aiResult = await refineTemplateByAI({
+      const aiResult = await refineTemplateByAIStream({
         prompt: value,
         baseSchema,
         previousResponseId,
+      }, {
+        onStatus: (text) => {
+          if (!text) return;
+          setAssistantMessageText(streamMessageId, text);
+        },
       });
       setPreviousResponseId(aiResult.responseId ?? null);
       result = aiResult;
     } catch (error) {
       setAssistantCapability('fallback');
       setPreviousResponseId(null);
-      pushMessage(
-        'assistant',
+      setAssistantMessageText(
+        streamMessageId,
         `真实 AI 当前不可用，已切换到引导模式：${error instanceof Error ? error.message : '未知错误'}`,
       );
       result = refineTemplateFromPrompt(baseSchema, value);
@@ -496,6 +594,10 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
   };
 
   useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
     if (!selectedTemplateId || lastImportedTemplateIdRef.current !== selectedTemplateId) {
       return;
     }
@@ -611,9 +713,36 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
             <span className="published-mode-badge">{assistantMode === 'refine' ? '修改模式' : '生成模式'}</span>
           </div>
 
-          {publishedTemplates.length ? (
+          <div className="template-filter-stack published-filter-stack">
+            <input
+              value={templateKeyword}
+              onChange={(event) => setTemplateKeyword(event.target.value)}
+              placeholder="搜索模板名称"
+            />
+            <div className="template-filter-row">
+              <select
+                value={templateSortBy}
+                onChange={(event) => setTemplateSortBy(event.target.value as TemplateSort)}
+              >
+                <option value="published">最近发布</option>
+                <option value="updated">最近更新</option>
+                <option value="name">名称 A-Z</option>
+              </select>
+              <select
+                value={templateSourceFilter}
+                onChange={(event) => setTemplateSourceFilter(event.target.value as TemplateSourceFilter)}
+              >
+                <option value="all">全部来源</option>
+                <option value="manual">手工搭建</option>
+                <option value="ai">AI 生成</option>
+                <option value="imported">导入模板</option>
+              </select>
+            </div>
+          </div>
+
+          {filteredPublishedTemplates.length ? (
             <div className="published-list">
-              {publishedTemplates.map((template) => (
+              {filteredPublishedTemplates.map((template) => (
                 <button
                   key={template.id}
                   ref={(element) => {
@@ -624,6 +753,10 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
                   onClick={() => enterRefineMode(template.id)}
                 >
                   <strong>{template.name}</strong>
+                  <div className="template-tag-row">
+                    <span className="template-source-tag">{getTemplateSourceLabel(template.source)}</span>
+                    <span className="template-status-tag">{template.publishedSchema ? '已发布' : '草稿'}</span>
+                  </div>
                   <span>
                     {template.publishedAt
                       ? `发布时间：${new Date(template.publishedAt).toLocaleString()}`
@@ -634,7 +767,11 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
               ))}
             </div>
           ) : (
-            <div className="published-empty">当前还没有已发布模板。可以先在编辑器里发布一份，或者直接使用下方的 AI 生成功能。</div>
+            <div className="published-empty">
+              {publishedTemplates.length
+                ? '当前筛选条件下没有匹配的模板。'
+                : '当前还没有已发布模板。可以先在编辑器里发布一份，或者直接使用下方的 AI 生成功能。'}
+            </div>
           )}
 
           <div className="published-sidebar-footer">
