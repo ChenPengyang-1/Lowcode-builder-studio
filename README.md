@@ -126,6 +126,7 @@ npm install
 ```env
 OPENAI_API_KEY=your_api_key
 OPENAI_MODEL=gpt-4.1-mini
+OPENAI_BASE_URL=
 AI_SERVER_PORT=8787
 ```
 

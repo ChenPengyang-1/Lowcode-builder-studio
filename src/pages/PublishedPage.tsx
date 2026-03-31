@@ -508,6 +508,28 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     navigate('/editor');
   };
 
+  const handleSavePreviewToTemplateCenter = () => {
+    if (!previewSchema) return;
+
+    const templateId = createTemplateFromSchema(previewSchema, previewSchema.pageMeta.title);
+    if (!templateId) {
+      setFileActionMessage('保存失败：当前页面结果未能通过模板创建校验。');
+      return;
+    }
+
+    lastImportedTemplateIdRef.current = templateId;
+    setFileActionMessage('已保存到模板中心，并自动选中当前模板。');
+    setAssistantMode('refine');
+    setSelectedTemplateId(templateId);
+    setPrompt('');
+    setPreviousResponseId(null);
+    setGeneratedResult(null);
+    setRefinedResult(null);
+    setMessages(
+      createRefineWelcome(previewSchema.pageMeta.title, summarizeSchema(previewSchema), assistantCapability),
+    );
+  };
+
   const handleLoadPublishedToEditor = () => {
     if (!selectedTemplateId || !selectedTemplate?.publishedSchema) return;
     loadTemplatePublished(selectedTemplateId);
@@ -801,14 +823,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
           {previewSchema ? (
             <div className="generated-actions">
               <button type="button" onClick={handleUseInEditor}>用这份结果进入编辑器</button>
-              <button
-                type="button"
-                onClick={() => {
-                  createTemplateFromSchema(previewSchema, previewSchema.pageMeta.title);
-                }}
-              >
-                保存到模板中心
-              </button>
+              <button type="button" onClick={handleSavePreviewToTemplateCenter}>保存到模板中心</button>
             </div>
           ) : null}
         </main>

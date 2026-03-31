@@ -5,10 +5,12 @@ import { buildPageSchemaFromBlueprint } from '../utils/build-page-schema.mjs';
 import { buildGenerateMessages, buildRefineMessages } from '../prompts/template-prompts.mjs';
 
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+const baseURL = process.env.OPENAI_BASE_URL;
 const client = process.env.OPENAI_API_KEY
   ? new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
-      timeout: 45000,
+      baseURL: baseURL || undefined,
+      timeout: 90000,
     })
   : null;
 

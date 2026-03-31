@@ -8,10 +8,12 @@ import {
 } from '../prompts/template-prompts.mjs';
 
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+const baseURL = process.env.OPENAI_BASE_URL;
 const client = process.env.OPENAI_API_KEY
   ? new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
-      timeout: 45000,
+      baseURL: baseURL || undefined,
+      timeout: 90000,
     })
   : null;
 
@@ -52,7 +54,7 @@ export async function chatTemplateWithAI({ message, previousResponseId, currentS
   const response = await client.responses.parse({
     model,
     input: buildChatMessages(message, currentSchema),
-    previous_response_id: streamedResponse.id || previousResponseId || undefined,
+    previous_response_id: previousResponseId || undefined,
     max_output_tokens: 220,
     text: {
       format: zodTextFormat(templateChatDecisionSchema, templateChatDecisionFormatName),
@@ -87,7 +89,7 @@ export async function streamChatTemplateWithAI({
   const stream = client.responses.stream({
     model,
     input: buildChatReplyMessages(message, currentSchema),
-    previous_response_id: streamedResponse.id || previousResponseId || undefined,
+    previous_response_id: previousResponseId || undefined,
     max_output_tokens: 260,
   });
 

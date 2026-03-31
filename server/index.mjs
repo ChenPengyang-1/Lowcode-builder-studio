@@ -33,9 +33,24 @@ function endSse(res) {
   res.end();
 }
 
+function normalizeAiErrorMessage(error) {
+  const rawMessage = error?.message || 'AI 服务调用失败。';
+
+  if (/timeout/i.test(rawMessage)) {
+    return '真实 AI 请求超时，请检查当前网络环境或代理配置。';
+  }
+
+  if (/ECONNRESET|socket hang up|fetch failed/i.test(rawMessage)) {
+    return '真实 AI 连接被中断，请检查当前网络环境或代理配置。';
+  }
+
+  return rawMessage;
+}
+
 function writeSseError(res, error) {
+  console.error('[AI SSE ERROR]', error);
   writeSse(res, 'error', {
-    message: error?.message || 'AI 服务调用失败。',
+    message: normalizeAiErrorMessage(error),
   });
   endSse(res);
 }
@@ -151,10 +166,11 @@ app.post('/api/ai/template/refine', async (req, res, next) => {
 });
 
 app.use((error, _req, res, _next) => {
+  console.error('[AI HTTP ERROR]', error);
   const statusCode = error?.statusCode || 500;
   res.status(statusCode).json({
     ok: false,
-    message: error?.message || 'AI 服务调用失败。',
+    message: normalizeAiErrorMessage(error),
   });
 });
 
