@@ -52,8 +52,6 @@
 - 在 `index.html` 中恢复重定向前的前端路由地址
 - 在本地 `vite dev` / `vite preview` 环境下可直接正常刷新
 
-如果后续部署到支持 SPA fallback 的平台或服务器，也可以继续保留 `BrowserRouter`。
-
 ## 项目结构
 
 ```text
