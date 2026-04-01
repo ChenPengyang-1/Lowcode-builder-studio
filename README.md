@@ -58,26 +58,26 @@
 
 ```text
 lowcode-builder-studio/
-├─ server/                    AI 服务端
-│  ├─ prompts/                Prompt 组织
-│  ├─ services/               OpenAI 调用服务
-│  ├─ shared/                 共享结构定义
-│  ├─ utils/                  服务端工具函数
-│  └─ index.mjs               服务入口
+├─ server/
+│  ├─ prompts/
+│  ├─ services/
+│  ├─ shared/
+│  ├─ utils/
+│  └─ index.mjs
 ├─ public/
-│  └─ 404.html                BrowserRouter 静态托管回退页
+│  └─ 404.html
 ├─ src/
-│  ├─ components/             编辑器与后台公共组件
-│  ├─ materials/              低代码物料注册表
-│  ├─ pages/                  页面级组件
-│  ├─ renderer/               Schema 渲染器
-│  ├─ store/                  Zustand 状态管理
-│  ├─ types/                  类型定义
-│  ├─ utils/                  工具函数与 AI 兜底逻辑
-│  ├─ App.tsx                 应用路由与登录态控制
-│  ├─ main.tsx                应用入口
-│  └─ styles.css              全局样式
-├─ .env.example               环境变量示例
+│  ├─ components/
+│  ├─ materials/
+│  ├─ pages/
+│  ├─ renderer/
+│  ├─ store/
+│  ├─ types/
+│  ├─ utils/
+│  ├─ App.tsx
+│  ├─ main.tsx
+│  └─ styles.css
+├─ .env.example
 ├─ index.html
 ├─ package.json
 └─ vite.config.ts
