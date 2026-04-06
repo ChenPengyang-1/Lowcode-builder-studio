@@ -11,7 +11,105 @@ function commonRules() {
   ].join('\n');
 }
 
-export function buildChatMessages(message, currentSchema) {
+function blueprintExample() {
+  return JSON.stringify(
+    {
+      pageTitle: '社团迎新页面',
+      pageDescription: '用于展示社团特色、活动图片和报名入口的迎新页面。',
+      backgroundTone: 'blue',
+      summary: '页面包含社团介绍、活动亮点、图片展示和报名表单，适合迎新招募场景。',
+      suggestions: ['可以补充社团成员介绍', '可以增加常见问题'],
+      sections: [
+        {
+          kind: 'hero',
+          title: '加入我们，一起开启精彩社团生活',
+          subtitle: '展示社团氛围、活动亮点和招新入口',
+          note: '适合迎新季招募展示',
+          ctaText: '立即报名',
+          visualTone: 'brand',
+        },
+        {
+          kind: 'image',
+          alt: '社团活动合照',
+          imageTheme: 'generic',
+          aspect: 'banner',
+        },
+        {
+          kind: 'feature-list',
+          title: '为什么选择我们',
+          items: ['活动丰富', '成员氛围好', '成长机会多'],
+        },
+        {
+          kind: 'form',
+          title: '填写报名信息',
+          buttonText: '提交报名',
+          fields: [
+            {
+              label: '姓名',
+              type: 'text',
+              placeholder: '请输入姓名',
+              required: true,
+              options: [],
+            },
+            {
+              label: '手机号',
+              type: 'tel',
+              placeholder: '请输入手机号',
+              required: true,
+              options: [],
+            },
+          ],
+        },
+      ],
+    },
+    null,
+    2,
+  );
+}
+
+function summarizeSchemaForBlueprint(baseSchema) {
+  if (!baseSchema || typeof baseSchema !== 'object') {
+    return '当前没有可用的页面结构摘要。';
+  }
+
+  const pageMeta = baseSchema.pageMeta ?? {};
+  const nodes = Array.isArray(baseSchema.nodes) ? baseSchema.nodes : [];
+
+  const nodeSummaries = nodes.slice(0, 10).map((node, index) => {
+    const type = node?.type ?? 'unknown';
+    const name = node?.name ?? `区块${index + 1}`;
+    const props = node?.props ?? {};
+
+    const keyInfo = [];
+    if (typeof props.title === 'string') keyInfo.push(`title=${props.title}`);
+    if (typeof props.subtitle === 'string') keyInfo.push(`subtitle=${props.subtitle}`);
+    if (typeof props.text === 'string') keyInfo.push(`text=${props.text}`);
+    if (typeof props.alt === 'string') keyInfo.push(`alt=${props.alt}`);
+    if (Array.isArray(props.fields)) keyInfo.push(`fields=${props.fields.length}`);
+
+    return `- ${type} | ${name}${keyInfo.length ? ` | ${keyInfo.join(', ')}` : ''}`;
+  });
+
+  return [
+    `页面标题：${pageMeta.title ?? ''}`,
+    `页面描述：${pageMeta.description ?? ''}`,
+    '当前页面区块概况：',
+    nodeSummaries.length ? nodeSummaries.join('\n') : '- 暂无区块',
+  ].join('\n');
+}
+
+function formatConversationHistory(conversationHistory) {
+  if (!Array.isArray(conversationHistory) || !conversationHistory.length) {
+    return '当前还没有更早的对话历史。';
+  }
+
+  return conversationHistory
+    .slice(-8)
+    .map((message) => `${message.role === 'user' ? '用户' : '助手'}：${message.text}`)
+    .join('\n');
+}
+
+export function buildChatMessages(message, currentSchema, conversationHistory) {
   return [
     {
       role: 'system',
@@ -29,6 +127,8 @@ export function buildChatMessages(message, currentSchema) {
       role: 'user',
       content: [
         `当前平台支持的区块类型：${supportedSectionTypes.join('、')}。`,
+        '最近对话历史：',
+        formatConversationHistory(conversationHistory),
         currentSchema
           ? ['当前已经有一版页面 Schema，可视为当前正在修改的页面：', JSON.stringify(currentSchema, null, 2)].join('\n')
           : '当前还没有生成出的页面结果。',
@@ -39,7 +139,7 @@ export function buildChatMessages(message, currentSchema) {
   ];
 }
 
-export function buildChatReplyMessages(message, currentSchema) {
+export function buildChatReplyMessages(message, currentSchema, conversationHistory) {
   return [
     {
       role: 'system',
@@ -55,6 +155,8 @@ export function buildChatReplyMessages(message, currentSchema) {
       role: 'user',
       content: [
         `当前平台支持的区块类型：${supportedSectionTypes.join('、')}。`,
+        '最近对话历史：',
+        formatConversationHistory(conversationHistory),
         currentSchema
           ? ['当前已经有一版页面 Schema，可视为当前正在修改的页面：', JSON.stringify(currentSchema, null, 2)].join('\n')
           : '当前还没有生成出的页面结果。',
@@ -65,7 +167,7 @@ export function buildChatReplyMessages(message, currentSchema) {
   ];
 }
 
-export function buildChatDecisionMessages(message, currentSchema, reply) {
+export function buildChatDecisionMessages(message, currentSchema, reply, conversationHistory) {
   return [
     {
       role: 'system',
@@ -84,6 +186,8 @@ export function buildChatDecisionMessages(message, currentSchema, reply) {
       role: 'user',
       content: [
         `当前平台支持的区块类型：${supportedSectionTypes.join('、')}。`,
+        '最近对话历史：',
+        formatConversationHistory(conversationHistory),
         currentSchema
           ? ['当前已经有一版页面 Schema，可视为当前正在修改的页面：', JSON.stringify(currentSchema, null, 2)].join('\n')
           : '当前还没有生成出的页面结果。',
@@ -108,6 +212,8 @@ export function buildGenerateMessages(prompt) {
         '请根据以下需求生成一份页面蓝图：',
         prompt,
         '请确保返回内容适合营销页、活动页、报名页或产品介绍页这类低代码落地页场景。',
+        '请严格参考下面这个 JSON 结构示例来输出，字段名必须保持一致，sections 中只能使用允许的 kind。',
+        blueprintExample(),
       ].join('\n'),
     },
   ];
@@ -122,12 +228,14 @@ export function buildRefineMessages(prompt, baseSchema) {
     {
       role: 'user',
       content: [
-        '下面是当前页面的 Schema，请先理解当前页面结构，再根据我的要求返回一份新的完整页面蓝图。',
-        '当前页面 Schema：',
-        JSON.stringify(baseSchema, null, 2),
+        '下面是当前页面的摘要，请先理解当前页面结构，再根据我的要求返回一份新的完整页面蓝图。',
+        '当前页面摘要：',
+        summarizeSchemaForBlueprint(baseSchema),
         '修改要求：',
         prompt,
         '要求：保留合理的已有结构，只在必要处调整；如果用户明确要求新增模块，可以补充新的模块。',
+        '请严格参考下面这个 JSON 结构示例来输出，字段名必须保持一致，sections 中只能使用允许的 kind。',
+        blueprintExample(),
       ].join('\n'),
     },
   ];

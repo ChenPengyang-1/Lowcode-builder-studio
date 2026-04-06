@@ -3,9 +3,22 @@ import { zodTextFormat } from 'openai/helpers/zod';
 import { templateBlueprintFormatName, templateBlueprintSchema } from '../shared/template-blueprint.mjs';
 import { buildPageSchemaFromBlueprint } from '../utils/build-page-schema.mjs';
 import { buildGenerateMessages, buildRefineMessages } from '../prompts/template-prompts.mjs';
+import {
+  generateTemplateWithCompatibleChat,
+  refineTemplateWithCompatibleChat,
+  streamGenerateTemplateWithCompatibleChat,
+  streamRefineTemplateWithCompatibleChat,
+} from './compat-blueprint-service.mjs';
 
-const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+const model =
+  process.env.AI_REASONING_MODEL ||
+  process.env.OPENAI_REASONING_MODEL ||
+  process.env.OPENAI_MODEL ||
+  'gpt-4.1-mini';
 const baseURL = process.env.OPENAI_BASE_URL;
+const apiStyle =
+  process.env.OPENAI_API_STYLE ||
+  (baseURL ? 'chat-completions' : model.toLowerCase().includes('claude') ? 'chat-completions' : 'responses');
 const client = process.env.OPENAI_API_KEY
   ? new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
@@ -64,6 +77,9 @@ async function requestBlueprintWithStatus(messages, previousResponseId, onStatus
 }
 
 export async function generateTemplateWithAI({ prompt, previousResponseId }) {
+  if (apiStyle === 'chat-completions') {
+    return generateTemplateWithCompatibleChat({ prompt, previousResponseId });
+  }
   const result = await requestBlueprint(buildGenerateMessages(prompt), previousResponseId);
 
   return {
@@ -78,6 +94,9 @@ export async function generateTemplateWithAI({ prompt, previousResponseId }) {
 }
 
 export async function streamGenerateTemplateWithAI({ prompt, previousResponseId, onStatus }) {
+  if (apiStyle === 'chat-completions') {
+    return streamGenerateTemplateWithCompatibleChat({ prompt, previousResponseId, onStatus });
+  }
   const result = await requestBlueprintWithStatus(
     buildGenerateMessages(prompt),
     previousResponseId,
@@ -96,6 +115,9 @@ export async function streamGenerateTemplateWithAI({ prompt, previousResponseId,
 }
 
 export async function refineTemplateWithAI({ prompt, baseSchema, previousResponseId }) {
+  if (apiStyle === 'chat-completions') {
+    return refineTemplateWithCompatibleChat({ prompt, baseSchema, previousResponseId });
+  }
   const result = await requestBlueprint(
     buildRefineMessages(prompt, baseSchema),
     previousResponseId,
@@ -118,6 +140,14 @@ export async function streamRefineTemplateWithAI({
   previousResponseId,
   onStatus,
 }) {
+  if (apiStyle === 'chat-completions') {
+    return streamRefineTemplateWithCompatibleChat({
+      prompt,
+      baseSchema,
+      previousResponseId,
+      onStatus,
+    });
+  }
   const result = await requestBlueprintWithStatus(
     buildRefineMessages(prompt, baseSchema),
     previousResponseId,

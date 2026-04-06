@@ -86,6 +86,10 @@ function buildActionPrompt(messages: ChatMessage[], latestUserText: string, acti
   ].join('\n');
 }
 
+function shouldFallbackToGenerate(text: string) {
+  return /开始生成|直接生成|帮我生成|生成一个|做一个|创建一个|搭一个|来一版/u.test(text);
+}
+
 function createGenerateWelcome(capability: AssistantCapability): ChatMessage[] {
   if (capability === 'ai') {
     return [
@@ -244,7 +248,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
       ? refinedResult?.summary ?? selectedTemplateSchema?.pageMeta.description ?? '基于当前模板继续修改。'
       : previewSchema
         ? '当前结果已经生成，可以继续通过右侧对话直接调整。'
-        : '左侧可以选择已发布模板继续修改，也可以直接从零生成一版。';
+        : '左侧可以选择模板继续修改，也可以直接从零生成一版。';
 
   const pushMessage = (role: 'assistant' | 'user', text: string) => {
     setMessages((prev) => [...prev, { id: makeId(role), role, text }]);
@@ -323,6 +327,10 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
         message: value,
         currentSchema: activeConversationSchema,
         previousResponseId,
+        conversationHistory: messagesRef.current.slice(-8).map((message) => ({
+          role: message.role,
+          text: message.text,
+        })),
       }, {
         onStatus: (text) => {
           if (!text) return;
@@ -339,49 +347,92 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
 
       if (chatResult.intent === 'generate' && chatResult.actionPrompt.trim()) {
         const generationMessageId = createAssistantStreamMessage();
-        const result = await generateTemplateByAIStream({
-          prompt: buildActionPrompt(nextMessages, chatResult.actionPrompt, 'generate'),
-          previousResponseId: chatResult.responseId ?? previousResponseId,
-        }, {
-          onStatus: (text) => {
-            if (!text) return;
-            setAssistantMessageText(generationMessageId, text);
-          },
-        });
-        setPreviousResponseId(result.responseId ?? chatResult.responseId ?? null);
-        setGeneratedResult(result);
-        setRefinedResult(null);
-        setAssistantMessageText(
-          generationMessageId,
-          '我已经把刚才确认好的方向落成页面草稿，左侧预览已经同步更新。接下来我们可以继续围绕这版结果慢慢调整。',
-        );
+        try {
+          const result = await generateTemplateByAIStream({
+            prompt: buildActionPrompt(nextMessages, chatResult.actionPrompt, 'generate'),
+            previousResponseId: chatResult.responseId ?? previousResponseId,
+          }, {
+            onStatus: (text) => {
+              if (!text) return;
+              setAssistantMessageText(generationMessageId, text);
+            },
+          });
+          setPreviousResponseId(result.responseId ?? chatResult.responseId ?? null);
+          setGeneratedResult(result);
+          setRefinedResult(null);
+          setAssistantMessageText(
+            generationMessageId,
+            '我已经把刚才确认好的方向落成页面草稿，左侧预览已经同步更新。接下来我们可以继续围绕这版结果慢慢调整。',
+          );
+        } catch (error) {
+          setAssistantCapability('fallback');
+          setPreviousResponseId(null);
+          const fallbackResult = generateTemplateFromPrompt(chatResult.actionPrompt);
+          setGeneratedResult(fallbackResult);
+          setRefinedResult(null);
+          setAssistantMessageText(
+            generationMessageId,
+            `真实 AI 当前不稳定，我已切换到本地规则继续生成首版页面：${error instanceof Error ? error.message : '未知错误'}`,
+          );
+          pushMessage('assistant', fallbackResult.summary);
+          if (fallbackResult.suggestions.length > 0) {
+            pushMessage('assistant', fallbackResult.suggestions.join(' '));
+          }
+        }
         return;
       }
 
       if (chatResult.intent === 'refine' && chatResult.actionPrompt.trim() && activeConversationSchema) {
         const refineMessageId = createAssistantStreamMessage();
-        const result = await refineTemplateByAIStream({
-          prompt: buildActionPrompt(nextMessages, chatResult.actionPrompt, 'refine'),
-          baseSchema: activeConversationSchema,
-          previousResponseId: chatResult.responseId ?? previousResponseId,
-        }, {
-          onStatus: (text) => {
-            if (!text) return;
-            setAssistantMessageText(refineMessageId, text);
-          },
-        });
-        setPreviousResponseId(result.responseId ?? chatResult.responseId ?? null);
-        setRefinedResult(result);
+        setAssistantMessageText(refineMessageId, '我已经理解了这次修改意图，正在把它落到当前页面结构上...');
+        const fallbackResult = refineTemplateFromPrompt(
+          activeConversationSchema,
+          chatResult.actionPrompt || value,
+        );
+        setPreviousResponseId(chatResult.responseId ?? null);
+        setRefinedResult(fallbackResult);
         setAssistantMessageText(
           refineMessageId,
-          '我已经按刚才聊定的方向更新了当前页面，左侧预览也一起刷新了。你可以继续提想法，我会继续陪你往下调。',
+          '我已经按刚才确认好的方向更新了当前页面，左侧预览也一起刷新了。你可以继续提想法，我会继续陪你往下调。',
         );
+        if (fallbackResult.suggestions.length > 0) {
+          pushMessage('assistant', fallbackResult.suggestions.join(' '));
+        }
       }
     } catch (error) {
-      setAssistantMessageText(
-        streamMessageId,
-        `这次对话失败了，请重试。${error instanceof Error ? `原因：${error.message}` : ''}`.trim(),
-      );
+      if (assistantMode === 'refine' && activeConversationSchema) {
+        setAssistantCapability('fallback');
+        setPreviousResponseId(null);
+        const fallbackResult = refineTemplateFromPrompt(activeConversationSchema, value);
+        setRefinedResult(fallbackResult);
+        setAssistantMessageText(
+          streamMessageId,
+          `真实 AI 当前不稳定，我已直接切换到本地规则继续修改当前页面：${error instanceof Error ? error.message : '未知错误'}`,
+        );
+        pushMessage('assistant', fallbackResult.summary);
+        if (fallbackResult.suggestions.length > 0) {
+          pushMessage('assistant', fallbackResult.suggestions.join(' '));
+        }
+      } else if (assistantMode === 'generate' && shouldFallbackToGenerate(value)) {
+        setAssistantCapability('fallback');
+        setPreviousResponseId(null);
+        const fallbackResult = generateTemplateFromPrompt(value);
+        setGeneratedResult(fallbackResult);
+        setRefinedResult(null);
+        setAssistantMessageText(
+          streamMessageId,
+          `真实 AI 当前不稳定，我已直接切换到本地规则生成首版页面：${error instanceof Error ? error.message : '未知错误'}`,
+        );
+        pushMessage('assistant', fallbackResult.summary);
+        if (fallbackResult.suggestions.length > 0) {
+          pushMessage('assistant', fallbackResult.suggestions.join(' '));
+        }
+      } else {
+        setAssistantMessageText(
+          streamMessageId,
+          `这次对话失败了，请重试。${error instanceof Error ? `原因：${error.message}` : ''}`.trim(),
+        );
+      }
     } finally {
       setAssistantBusy(false);
     }
@@ -502,7 +553,11 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     if (assistantMode === 'refine' && selectedTemplateId) {
       loadSchema(previewSchema, selectedTemplateId);
     } else {
-      loadSchema(previewSchema, null);
+      const templateId = createTemplateFromSchema(previewSchema, previewSchema.pageMeta.title, {
+        source: 'ai',
+        publish: false,
+      });
+      loadSchema(previewSchema, templateId || null);
     }
 
     navigate('/editor');
@@ -511,14 +566,17 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
   const handleSavePreviewToTemplateCenter = () => {
     if (!previewSchema) return;
 
-    const templateId = createTemplateFromSchema(previewSchema, previewSchema.pageMeta.title);
+    const templateId = createTemplateFromSchema(previewSchema, previewSchema.pageMeta.title, {
+      source: 'ai',
+      publish: true,
+    });
     if (!templateId) {
       setFileActionMessage('保存失败：当前页面结果未能通过模板创建校验。');
       return;
     }
 
     lastImportedTemplateIdRef.current = templateId;
-    setFileActionMessage('已保存到模板中心，并自动选中当前模板。');
+    setFileActionMessage('已发布到模板中心，并自动选中当前模板。');
     setAssistantMode('refine');
     setSelectedTemplateId(templateId);
     setPrompt('');
@@ -731,7 +789,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
       <div className="published-layout">
         <aside className="published-sidebar published-sticky-side">
           <div className="published-toolbar">
-            <div className="published-section-title">已发布模板</div>
+            <div className="published-section-title">模板列表</div>
             <span className="published-mode-badge">{assistantMode === 'refine' ? '修改模式' : '生成模式'}</span>
           </div>
 
@@ -792,7 +850,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
             <div className="published-empty">
               {publishedTemplates.length
                 ? '当前筛选条件下没有匹配的模板。'
-                : '当前还没有已发布模板。可以先在编辑器里发布一份，或者直接使用下方的 AI 生成功能。'}
+                : '当前还没有模板。可以先在编辑器里发布一份，或者直接使用下方的 AI 生成功能。'}
             </div>
           )}
 
@@ -817,13 +875,13 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
           {previewSchema ? (
             <SchemaPreview schema={previewSchema} title={previewTitle} description={previewDescription} />
           ) : (
-            <div className="published-empty large">左侧可以选择已发布模板继续修改，也可以从零生成一版新的页面模板。</div>
+            <div className="published-empty large">左侧可以选择模板继续修改，也可以从零生成一版新的页面模板。</div>
           )}
 
           {previewSchema ? (
             <div className="generated-actions">
               <button type="button" onClick={handleUseInEditor}>用这份结果进入编辑器</button>
-              <button type="button" onClick={handleSavePreviewToTemplateCenter}>保存到模板中心</button>
+              <button type="button" onClick={handleSavePreviewToTemplateCenter}>直接发布到模板中心</button>
             </div>
           ) : null}
         </main>

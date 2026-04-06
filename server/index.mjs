@@ -97,7 +97,7 @@ app.post('/api/ai/template/generate', async (req, res, next) => {
 });
 
 app.post('/api/ai/template/chat', async (req, res, next) => {
-  const { message, previousResponseId, currentSchema } = req.body ?? {};
+  const { message, previousResponseId, currentSchema, conversationHistory } = req.body ?? {};
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ ok: false, message: 'message 不能为空。' });
   }
@@ -110,6 +110,7 @@ app.post('/api/ai/template/chat', async (req, res, next) => {
         message,
         previousResponseId,
         currentSchema,
+        conversationHistory,
         onTextDelta(text) {
           writeSse(res, 'reply_delta', { text });
         },
@@ -122,7 +123,7 @@ app.post('/api/ai/template/chat', async (req, res, next) => {
   }
 
   try {
-    const result = await chatTemplateWithAI({ message, previousResponseId, currentSchema });
+    const result = await chatTemplateWithAI({ message, previousResponseId, currentSchema, conversationHistory });
     return res.json(result);
   } catch (error) {
     return next(error);

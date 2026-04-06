@@ -59,7 +59,14 @@ interface EditorState {
   exportSchema: () => string;
   submitForm: (payload: Record<string, unknown>) => void;
   saveAsTemplate: (name?: string) => void;
-  createTemplateFromSchema: (schema: PageSchema, name?: string) => string;
+  createTemplateFromSchema: (
+    schema: PageSchema,
+    name?: string,
+    options?: {
+      source?: SavedTemplate['source'];
+      publish?: boolean;
+    },
+  ) => string;
   updateTemplateDraft: (templateId: string) => void;
   publishTemplate: (templateId: string) => void;
   importTemplateFile: (text: string) => { ok: boolean; message: string; templateId?: string };
@@ -422,6 +429,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   saveAsTemplate: (name) => {
     const current = normalizeSchema(get().schema, { fallbackTitle: '未命名模板' });
     if (!current.ok) return;
+      const activeTemplate = get().templates.find((item) => item.id === get().activeTemplateId) ?? null;
+      const source = activeTemplate?.source ?? 'manual';
       const template: SavedTemplate = {
         id: createId('tpl'),
         name: name?.trim() || `${current.schema.pageMeta.title} 妯℃澘`,
@@ -429,23 +438,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         publishedSchema: null,
         updatedAt: new Date().toISOString(),
         publishedAt: null,
-        source: 'manual',
+        source,
       };
     const templates = updateTemplatesList((prev) => [template, ...prev]);
     set({ templates, activeTemplateId: template.id });
   },
 
-  createTemplateFromSchema: (schema, name) => {
+  createTemplateFromSchema: (schema, name, options) => {
       const normalized = normalizeSchema(schema, { fallbackTitle: 'AI 模板' });
     if (!normalized.ok) return '';
+      const now = new Date().toISOString();
+      const shouldPublish = Boolean(options?.publish);
+      const source = options?.source ?? 'ai';
       const template: SavedTemplate = {
         id: createId('tpl'),
         name: name?.trim() || `${normalized.schema.pageMeta.title} AI 妯℃澘`,
         draftSchema: cloneSchema(normalized.schema),
-        publishedSchema: null,
-        updatedAt: new Date().toISOString(),
-        publishedAt: null,
-        source: 'ai',
+        publishedSchema: shouldPublish ? cloneSchema(normalized.schema) : null,
+        updatedAt: now,
+        publishedAt: shouldPublish ? now : null,
+        source,
       };
     const templates = updateTemplatesList((prev) => [template, ...prev]);
     set({ templates, activeTemplateId: template.id });
@@ -459,7 +471,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const templates = updateTemplatesList((prev) =>
       prev.map((item) =>
         item.id === templateId
-          ? { ...item, draftSchema: current, updatedAt: new Date().toISOString() }
+          ? {
+              ...item,
+              draftSchema: current,
+              updatedAt: new Date().toISOString(),
+              source: item.source ?? 'manual',
+            }
           : item,
       ),
     );
@@ -480,6 +497,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               publishedSchema: cloneSchema(current),
               updatedAt: new Date().toISOString(),
               publishedAt: new Date().toISOString(),
+              source: item.source ?? 'manual',
             }
           : item,
       ),

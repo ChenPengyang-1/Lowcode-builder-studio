@@ -34,6 +34,10 @@ interface ChatPayload {
   message: string;
   currentSchema?: PageSchema | null;
   previousResponseId?: string | null;
+  conversationHistory?: Array<{
+    role: 'assistant' | 'user';
+    text: string;
+  }>;
 }
 
 interface StreamHandlers<TResult> {

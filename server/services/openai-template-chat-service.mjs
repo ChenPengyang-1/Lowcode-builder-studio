@@ -6,9 +6,20 @@ import {
   buildChatMessages,
   buildChatReplyMessages,
 } from '../prompts/template-prompts.mjs';
+import {
+  chatTemplateWithCompatibleChat,
+  streamChatTemplateWithCompatibleChat,
+} from './compat-chat-completions.mjs';
 
-const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+const model =
+  process.env.AI_CHAT_MODEL ||
+  process.env.OPENAI_CHAT_MODEL ||
+  process.env.OPENAI_MODEL ||
+  'gpt-4.1-mini';
 const baseURL = process.env.OPENAI_BASE_URL;
+const apiStyle =
+  process.env.OPENAI_API_STYLE ||
+  (baseURL ? 'chat-completions' : model.toLowerCase().includes('claude') ? 'chat-completions' : 'responses');
 const client = process.env.OPENAI_API_KEY
   ? new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
@@ -48,12 +59,15 @@ function extractReplyText(response) {
   );
 }
 
-export async function chatTemplateWithAI({ message, previousResponseId, currentSchema }) {
+export async function chatTemplateWithAI({ message, previousResponseId, currentSchema, conversationHistory }) {
   ensureClient();
+  if (apiStyle === 'chat-completions') {
+    return chatTemplateWithCompatibleChat({ message, previousResponseId, currentSchema, conversationHistory });
+  }
 
   const response = await client.responses.parse({
     model,
-    input: buildChatMessages(message, currentSchema),
+    input: buildChatMessages(message, currentSchema, conversationHistory),
     previous_response_id: previousResponseId || undefined,
     max_output_tokens: 220,
     text: {
@@ -82,13 +96,23 @@ export async function streamChatTemplateWithAI({
   message,
   previousResponseId,
   currentSchema,
+  conversationHistory,
   onTextDelta,
 }) {
   ensureClient();
+  if (apiStyle === 'chat-completions') {
+    return streamChatTemplateWithCompatibleChat({
+      message,
+      previousResponseId,
+      currentSchema,
+      conversationHistory,
+      onTextDelta,
+    });
+  }
 
   const stream = client.responses.stream({
     model,
-    input: buildChatReplyMessages(message, currentSchema),
+    input: buildChatReplyMessages(message, currentSchema, conversationHistory),
     previous_response_id: previousResponseId || undefined,
     max_output_tokens: 260,
   });
@@ -108,7 +132,7 @@ export async function streamChatTemplateWithAI({
 
   const decisionResponse = await client.responses.parse({
     model,
-    input: buildChatDecisionMessages(message, currentSchema, reply),
+    input: buildChatDecisionMessages(message, currentSchema, reply, conversationHistory),
     previous_response_id: streamedResponse.id || previousResponseId || undefined,
     max_output_tokens: 120,
     text: {

@@ -282,6 +282,10 @@ export function normalizeTemplateRecord(rawTemplate: unknown): SavedTemplate | n
       typeof rawTemplate.publishedAt === 'string' && rawTemplate.publishedAt.trim()
         ? rawTemplate.publishedAt
         : null,
+    source:
+      rawTemplate.source === 'manual' || rawTemplate.source === 'ai' || rawTemplate.source === 'imported'
+        ? rawTemplate.source
+        : undefined,
   };
 }
 

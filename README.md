@@ -123,9 +123,9 @@ npm install
 
 ```env
 OPENAI_API_KEY=your_api_key
-OPENAI_MODEL=gpt-4.1-mini
-OPENAI_BASE_URL=
-AI_SERVER_PORT=8787
+OPENAI_MODEL=your_model
+OPENAI_BASE_URL=your_base_url
+AI_SERVER_PORT=your_server_port
 ```
 
 ### 3. 启动前端开发环境

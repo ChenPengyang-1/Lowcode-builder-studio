@@ -34,6 +34,28 @@ function dedupeFields(fields: FormField[]) {
   return fields.filter((field, index, list) => list.findIndex((item) => item.label === field.label) === index);
 }
 
+function moveNodeToFront(nodes: PageNode[], type: PageNode['type']) {
+  const index = nodes.findIndex((node) => node.type === type);
+  if (index <= 0) return nodes;
+
+  const next = [...nodes];
+  const [target] = next.splice(index, 1);
+  next.unshift(target);
+  return next;
+}
+
+function moveNodeAfterType(nodes: PageNode[], targetType: PageNode['type'], anchorType: PageNode['type']) {
+  const targetIndex = nodes.findIndex((node) => node.type === targetType);
+  const anchorIndex = nodes.findIndex((node) => node.type === anchorType);
+  if (targetIndex === -1 || anchorIndex === -1 || targetIndex === anchorIndex + 1) return nodes;
+
+  const next = [...nodes];
+  const [target] = next.splice(targetIndex, 1);
+  const currentAnchorIndex = next.findIndex((node) => node.type === anchorType);
+  next.splice(currentAnchorIndex + 1, 0, target);
+  return next;
+}
+
 function buildCoreFields(prompt: string, richer = false) {
   const fields: FormField[] = [
     makeField('姓名', 'text', true),
@@ -128,7 +150,9 @@ function makeStatGrid(title: string, items: string[]): PageNode {
 
 function makeImage(prompt: string, index: number): PageNode {
   const width = index === 0 ? 1400 : 1200;
-  const src = hasAny(prompt, ['课程', '学习', '培训'])
+  const src = hasAny(prompt, ['社团', '迎新', '活动'])
+    ? `https://images.unsplash.com/photo-1511578314322-379afb476865?auto=format&fit=crop&w=${width}&q=80`
+    : hasAny(prompt, ['课程', '学习', '培训'])
     ? `https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=${width}&q=80`
     : hasAny(prompt, ['产品', '科技', 'saas'])
       ? `https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=${width}&q=80`
@@ -340,9 +364,23 @@ export function refineTemplateFromPrompt(baseSchema: PageSchema, rawPrompt: stri
     summaryParts.push('新增了一张图片');
   }
 
+  if (hasAny(prompt, ['活动图', '活动图片', '社团活动', '迎新照片', '活动照片'])) {
+    const imageCount = nodes.filter((node) => node.type === 'image').length;
+    nodes.push(makeImage(`${prompt} 社团 活动`, imageCount));
+    summaryParts.push('补充了更贴近活动场景的展示图片');
+  }
+
   if (hasAny(prompt, ['faq', '常见问题', '问答'])) {
     nodes.push(createFaqNode());
     summaryParts.push('补充了 FAQ 区块');
+  }
+
+  if (hasAny(prompt, ['删除faq', '去掉faq', '不要faq', '删掉faq', '删除常见问题', '去掉常见问题'])) {
+    const nextNodes = nodes.filter((node) => !(node.type === 'feature-list' && String(node.props.title ?? '').includes('常见问题')));
+    if (nextNodes.length !== nodes.length) {
+      nodes = nextNodes;
+      summaryParts.push('移除了 FAQ 区块');
+    }
   }
 
   if (hasAny(prompt, ['简洁', '极简'])) {
@@ -401,9 +439,140 @@ export function refineTemplateFromPrompt(baseSchema: PageSchema, rawPrompt: stri
     }
   }
 
+  if (hasAny(prompt, ['报名区', '表单更显眼', '报名更显眼', '表单显眼', '突出表单', '突出报名', '报名入口更明显', '报名按钮更明显'])) {
+    let highlighted = false;
+    nodes = nodes.map((node) => {
+      if (node.type !== 'form') {
+        return node;
+      }
+
+      highlighted = true;
+      return {
+        ...node,
+        props: {
+          ...node.props,
+          title:
+            typeof node.props.title === 'string' && !node.props.title.includes('立即')
+              ? `立即报名 · ${node.props.title}`
+              : node.props.title,
+          buttonText:
+            typeof node.props.buttonText === 'string' ? '立即报名' : node.props.buttonText,
+        },
+        style: {
+          ...node.style,
+          border: '2px solid #2563eb',
+          boxShadow: '0 18px 40px rgba(37, 99, 235, 0.18)',
+          background: 'linear-gradient(180deg, #ffffff 0%, #eff6ff 100%)',
+        },
+      };
+    });
+
+    if (highlighted) {
+      summaryParts.push('强化了报名区的视觉重点');
+    }
+  }
+
+  if (hasAny(prompt, ['报名区靠前', '表单靠前', '报名入口靠前', '把表单放前面', '把报名放前面'])) {
+    const nextNodes = moveNodeAfterType(nodes, 'form', 'hero');
+    if (nextNodes !== nodes) {
+      nodes = nextNodes;
+      summaryParts.push('把报名区调整到了更靠前的位置');
+    }
+  }
+
+  if (hasAny(prompt, ['主视觉更显眼', '头图更显眼', '首屏更显眼', 'banner更显眼'])) {
+    let changed = false;
+    nodes = nodes.map((node) => {
+      if (node.type !== 'hero') return node;
+      changed = true;
+      return {
+        ...node,
+        style: {
+          ...node.style,
+          padding: '48px',
+          boxShadow: '0 30px 80px rgba(15, 23, 42, 0.22)',
+        },
+      };
+    });
+    if (changed) {
+      summaryParts.push('增强了主视觉区块的展示力度');
+    }
+  }
+
+  if (hasAny(prompt, ['青春', '活泼', '年轻', '校园'])) {
+    schema.pageMeta.background = 'linear-gradient(180deg, #fff7ed 0%, #eff6ff 52%, #f0fdf4 100%)';
+    nodes = nodes.map((node) =>
+      node.type === 'hero'
+        ? {
+            ...node,
+            style: {
+              ...node.style,
+              background: 'linear-gradient(135deg, #2563eb 0%, #ec4899 52%, #f59e0b 100%)',
+            },
+          }
+        : node,
+    );
+    summaryParts.push('整体风格调整得更青春活泼');
+  }
+
+  if (hasAny(prompt, ['社团介绍', '补充介绍', '加一段介绍', '增加介绍'])) {
+    const alreadyHasIntro = nodes.some(
+      (node) => node.type === 'text' && typeof node.props.text === 'string' && String(node.props.text).includes('社团'),
+    );
+    if (!alreadyHasIntro) {
+      nodes.splice(1, 0, makeText('这里可以补充社团定位、活动方向、成员氛围和迎新亮点，让新成员更快理解社团特色。'));
+      summaryParts.push('补充了一段社团介绍文案');
+    }
+  }
+
+  if (hasAny(prompt, ['成员介绍', '核心成员', '团队介绍'])) {
+    nodes.push(
+      makeFeatureList('核心成员与分工', [
+        '主席团|负责整体运营和迎新组织',
+        '活动组|负责活动策划与现场执行',
+        '宣传组|负责海报内容与社媒传播',
+      ], false),
+    );
+    summaryParts.push('补充了成员介绍区块');
+  }
+
+  if (hasAny(prompt, ['活动亮点', '活动丰富', '展示活动'])) {
+    nodes.push(
+      makeFeatureList('近期活动亮点', [
+        '迎新见面会|帮助新成员快速融入',
+        '主题工作坊|提升策划与执行能力',
+        '校内联动活动|增强社团曝光与参与感',
+      ], false),
+    );
+    summaryParts.push('补充了活动亮点区块');
+  }
+
+  if (hasAny(prompt, ['不要数据区', '删掉数据区', '去掉数据区'])) {
+    const nextNodes = nodes.filter((node) => node.type !== 'stat-grid');
+    if (nextNodes.length !== nodes.length) {
+      nodes = nextNodes;
+      summaryParts.push('移除了数据区块');
+    }
+  }
+
+  if (hasAny(prompt, ['数据区', '加数据', '增加数据区'])) {
+    const hasStats = nodes.some((node) => node.type === 'stat-grid');
+    if (!hasStats) {
+      nodes.push(makeStatGrid('社团数据概览', ['12个|特色活动', '300+|累计成员', '95%|活动好评']));
+      summaryParts.push('补充了数据展示区块');
+    }
+  }
+
+  if (hasAny(prompt, ['图片靠前', '图片放前面', '活动图靠前'])) {
+    const nextNodes = moveNodeAfterType(nodes, 'image', 'hero');
+    if (nextNodes !== nodes) {
+      nodes = nextNodes;
+      summaryParts.push('把图片区调整到了更靠前的位置');
+    }
+  }
+
   if (!summaryParts.length) {
-    nodes.push(makeText('已根据你的描述完成一轮轻量调整，你可以继续给我更具体的修改方向。', 'title'));
-    summaryParts.push('完成了一轮轻量调整');
+    summaryParts.push('暂时没有识别到明确的结构修改动作');
     suggestions.push('可以继续描述你希望修改哪一块，比如主视觉、表单或 FAQ。');
   }
 
