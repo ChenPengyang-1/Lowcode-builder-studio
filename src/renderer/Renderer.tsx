@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { CSSProperties, MouseEvent } from 'react';
 import { useEditorStore } from '../store/editorStore';
 import type { FormField, PageNode } from '../types/schema';
@@ -33,7 +33,7 @@ function runActions(node: PageNode) {
   }
 }
 
-function ChildDropZone({
+const ChildDropZone = memo(function ChildDropZone({
   active,
   onDrop,
   label,
@@ -55,10 +55,10 @@ function ChildDropZone({
       <span>{label}</span>
     </div>
   );
-}
+});
 
 // 表单节点既是可配置的 Schema 区块，也是预览态下可真实交互的表单。
-function FormRenderer({
+const FormRenderer = memo(function FormRenderer({
   node,
   selectedId,
   mode,
@@ -205,9 +205,9 @@ function FormRenderer({
       </button>
     </div>
   );
-}
+});
 
-function NodeFrame({
+const NodeFrame = memo(function NodeFrame({
   node,
   mode,
   selectedId,
@@ -235,7 +235,7 @@ function NodeFrame({
       {children}
     </div>
   );
-}
+});
 
 export function Renderer({
   node,

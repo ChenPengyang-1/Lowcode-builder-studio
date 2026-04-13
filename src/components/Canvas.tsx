@@ -1,5 +1,50 @@
+import { memo } from 'react';
+import { shallow } from 'zustand/shallow';
 import { Renderer } from '../renderer/Renderer';
 import { useEditorStore } from '../store/editorStore';
+
+const OptimizedRootDropSlot = memo(function OptimizedRootDropSlot({
+  index,
+  active,
+  dragMaterialType,
+  dragNodeId,
+  onDropMaterial,
+  onDropNode,
+  clearDragMaterial,
+  clearDragNode,
+}: {
+  index: number;
+  active: boolean;
+  dragMaterialType: string | null;
+  dragNodeId: string | null;
+  onDropMaterial: (index: number) => void;
+  onDropNode: (sourceId: string, index: number) => void;
+  clearDragMaterial: () => void;
+  clearDragNode: () => void;
+}) {
+  const label = index === 0 ? '插入到页面顶部' : `插入到第 ${index} 个区块后`;
+
+  return (
+    <div
+      className={`drop-slot ${active ? 'active' : ''}`}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault();
+        if (dragMaterialType) {
+          onDropMaterial(index);
+          clearDragMaterial();
+          return;
+        }
+        if (dragNodeId) {
+          onDropNode(dragNodeId, index);
+          clearDragNode();
+        }
+      }}
+    >
+      <span>{label}</span>
+    </div>
+  );
+});
 
 // 根级落点用于接收物料新增和已有节点重排，支持插到页面任意位置。
 function RootDropSlot({ index, active }: { index: number; active: boolean }) {
@@ -35,18 +80,39 @@ function RootDropSlot({ index, active }: { index: number; active: boolean }) {
 }
 
 export function Canvas() {
-  const schema = useEditorStore((state) => state.schema);
-  const selectedId = useEditorStore((state) => state.selectedId);
-  const selectNode = useEditorStore((state) => state.selectNode);
-  const mode = useEditorStore((state) => state.mode);
-  const dragMaterialType = useEditorStore((state) => state.dragMaterialType);
-  const dragNodeId = useEditorStore((state) => state.dragNodeId);
-  const insertMaterial = useEditorStore((state) => state.insertMaterial);
-  const moveNodeByDrop = useEditorStore((state) => state.moveNodeByDrop);
-  const activeTemplateId = useEditorStore((state) => state.activeTemplateId);
-  const templates = useEditorStore((state) => state.templates);
+  const {
+    schema,
+    selectedId,
+    selectNode,
+    mode,
+    dragMaterialType,
+    dragNodeId,
+    insertMaterial,
+    moveNodeByDrop,
+    setDragMaterialType,
+    setDragNodeId,
+    activeTemplateId,
+    templates,
+  } = useEditorStore(
+    (state) => ({
+      schema: state.schema,
+      selectedId: state.selectedId,
+      selectNode: state.selectNode,
+      mode: state.mode,
+      dragMaterialType: state.dragMaterialType,
+      dragNodeId: state.dragNodeId,
+      insertMaterial: state.insertMaterial,
+      moveNodeByDrop: state.moveNodeByDrop,
+      setDragMaterialType: state.setDragMaterialType,
+      setDragNodeId: state.setDragNodeId,
+      activeTemplateId: state.activeTemplateId,
+      templates: state.templates,
+    }),
+    shallow,
+  );
 
   const activeTemplate = templates.find((item) => item.id === activeTemplateId) ?? null;
+  const isDragging = Boolean(dragMaterialType || dragNodeId);
 
   return (
     <section className="canvas-wrap">
@@ -65,12 +131,29 @@ export function Canvas() {
       </div>
 
       <div
-        className={`canvas ${mode === 'preview' ? 'preview-mode' : ''} ${(dragMaterialType || dragNodeId) ? 'drag-over-ready' : ''}`}
+        className={`canvas ${mode === 'preview' ? 'preview-mode' : ''} ${isDragging ? 'drag-over-ready' : ''}`}
         style={{ background: schema.pageMeta.background }}
         onClick={() => selectNode(null)}
       >
         {/* 编辑态下，物料和节点都可以直接拖到第一个区块之前。 */}
-        {(dragMaterialType || dragNodeId) && mode === 'edit' && <RootDropSlot index={0} active />}
+        {isDragging && mode === 'edit' && (
+          <OptimizedRootDropSlot
+            index={0}
+            active
+            dragMaterialType={dragMaterialType}
+            dragNodeId={dragNodeId}
+            onDropMaterial={(index) => {
+              if (dragMaterialType) {
+                insertMaterial(dragMaterialType, null, index);
+              }
+            }}
+            onDropNode={(sourceId, index) => {
+              moveNodeByDrop(sourceId, null, index);
+            }}
+            clearDragMaterial={() => setDragMaterialType(null)}
+            clearDragNode={() => setDragNodeId(null)}
+          />
+        )}
 
         {schema.nodes.length ? (
           schema.nodes.map((node, index) => (
@@ -91,7 +174,24 @@ export function Canvas() {
                   moveNodeByDrop(sourceId, parentId, childIndex);
                 }}
               />
-              {(dragMaterialType || dragNodeId) && mode === 'edit' && <RootDropSlot index={index + 1} active />}
+              {isDragging && mode === 'edit' && (
+                <OptimizedRootDropSlot
+                  index={index + 1}
+                  active
+                  dragMaterialType={dragMaterialType}
+                  dragNodeId={dragNodeId}
+                  onDropMaterial={(nextIndex) => {
+                    if (dragMaterialType) {
+                      insertMaterial(dragMaterialType, null, nextIndex);
+                    }
+                  }}
+                  onDropNode={(sourceId, nextIndex) => {
+                    moveNodeByDrop(sourceId, null, nextIndex);
+                  }}
+                  clearDragMaterial={() => setDragMaterialType(null)}
+                  clearDragNode={() => setDragNodeId(null)}
+                />
+              )}
             </div>
           ))
         ) : (

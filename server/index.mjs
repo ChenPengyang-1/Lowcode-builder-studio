@@ -28,6 +28,7 @@ function writeSse(res, event, data) {
 }
 
 function endSse(res) {
+  if (res.writableEnded) return;
   res.write('event: done\n');
   res.write('data: {}\n\n');
   res.end();
@@ -49,6 +50,7 @@ function normalizeAiErrorMessage(error) {
 
 function writeSseError(res, error) {
   console.error('[AI SSE ERROR]', error);
+  if (res.writableEnded) return;
   writeSse(res, 'error', {
     message: normalizeAiErrorMessage(error),
   });
@@ -72,18 +74,26 @@ app.post('/api/ai/template/generate', async (req, res, next) => {
 
   if (req.headers.accept?.includes('text/event-stream')) {
     initSse(res);
+    let clientClosed = false;
+    req.on('close', () => {
+      clientClosed = true;
+    });
     try {
+      if (clientClosed) return res.end();
       writeSse(res, 'status', { text: '已连接生成服务，正在准备页面蓝图...' });
       const result = await streamGenerateTemplateWithAI({
         prompt,
         previousResponseId,
         onStatus(text) {
+          if (clientClosed || res.writableEnded) return;
           writeSse(res, 'status', { text });
         },
       });
+      if (clientClosed || res.writableEnded) return res.end();
       writeSse(res, 'result', result);
       return endSse(res);
     } catch (error) {
+      if (clientClosed || res.writableEnded) return res.end();
       return writeSseError(res, error);
     }
   }
@@ -104,7 +114,12 @@ app.post('/api/ai/template/chat', async (req, res, next) => {
 
   if (req.headers.accept?.includes('text/event-stream')) {
     initSse(res);
+    let clientClosed = false;
+    req.on('close', () => {
+      clientClosed = true;
+    });
     try {
+      if (clientClosed) return res.end();
       writeSse(res, 'status', { text: 'AI 已连接，正在生成回复...' });
       const result = await streamChatTemplateWithAI({
         message,
@@ -112,12 +127,15 @@ app.post('/api/ai/template/chat', async (req, res, next) => {
         currentSchema,
         conversationHistory,
         onTextDelta(text) {
+          if (clientClosed || res.writableEnded) return;
           writeSse(res, 'reply_delta', { text });
         },
       });
+      if (clientClosed || res.writableEnded) return res.end();
       writeSse(res, 'result', result);
       return endSse(res);
     } catch (error) {
+      if (clientClosed || res.writableEnded) return res.end();
       return writeSseError(res, error);
     }
   }
@@ -141,19 +159,27 @@ app.post('/api/ai/template/refine', async (req, res, next) => {
 
   if (req.headers.accept?.includes('text/event-stream')) {
     initSse(res);
+    let clientClosed = false;
+    req.on('close', () => {
+      clientClosed = true;
+    });
     try {
+      if (clientClosed) return res.end();
       writeSse(res, 'status', { text: '已连接修改服务，正在理解当前页面...' });
       const result = await streamRefineTemplateWithAI({
         prompt,
         baseSchema,
         previousResponseId,
         onStatus(text) {
+          if (clientClosed || res.writableEnded) return;
           writeSse(res, 'status', { text });
         },
       });
+      if (clientClosed || res.writableEnded) return res.end();
       writeSse(res, 'result', result);
       return endSse(res);
     } catch (error) {
+      if (clientClosed || res.writableEnded) return res.end();
       return writeSseError(res, error);
     }
   }

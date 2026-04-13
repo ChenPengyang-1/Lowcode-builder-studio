@@ -46,6 +46,10 @@ interface StreamHandlers<TResult> {
   onResult?: (result: TResult) => void;
 }
 
+interface StreamOptions {
+  signal?: AbortSignal;
+}
+
 interface SseEventPayload {
   event: string;
   data: unknown;
@@ -90,6 +94,7 @@ async function postSse<TBody, TResult>(
   url: string,
   body: TBody,
   handlers: StreamHandlers<TResult>,
+  options: StreamOptions = {},
 ): Promise<TResult> {
   const response = await fetch(url, {
     method: 'POST',
@@ -98,6 +103,7 @@ async function postSse<TBody, TResult>(
       Accept: 'text/event-stream',
     },
     body: JSON.stringify(body),
+    signal: options.signal,
   });
 
   if (!response.ok || !response.body) {
@@ -156,8 +162,9 @@ export function generateTemplateByAI(payload: GeneratePayload) {
 export function generateTemplateByAIStream(
   payload: GeneratePayload,
   handlers: StreamHandlers<AiTemplateApiResult>,
+  options?: StreamOptions,
 ) {
-  return postSse<GeneratePayload, AiTemplateApiResult>('/api/ai/template/generate', payload, handlers);
+  return postSse<GeneratePayload, AiTemplateApiResult>('/api/ai/template/generate', payload, handlers, options);
 }
 
 export function chatTemplateByAI(payload: ChatPayload) {
@@ -167,8 +174,9 @@ export function chatTemplateByAI(payload: ChatPayload) {
 export function chatTemplateByAIStream(
   payload: ChatPayload,
   handlers: StreamHandlers<AiChatApiResult>,
+  options?: StreamOptions,
 ) {
-  return postSse<ChatPayload, AiChatApiResult>('/api/ai/template/chat', payload, handlers);
+  return postSse<ChatPayload, AiChatApiResult>('/api/ai/template/chat', payload, handlers, options);
 }
 
 export function refineTemplateByAI(payload: RefinePayload) {
@@ -178,6 +186,7 @@ export function refineTemplateByAI(payload: RefinePayload) {
 export function refineTemplateByAIStream(
   payload: RefinePayload,
   handlers: StreamHandlers<AiTemplateApiResult>,
+  options?: StreamOptions,
 ) {
-  return postSse<RefinePayload, AiTemplateApiResult>('/api/ai/template/refine', payload, handlers);
+  return postSse<RefinePayload, AiTemplateApiResult>('/api/ai/template/refine', payload, handlers, options);
 }

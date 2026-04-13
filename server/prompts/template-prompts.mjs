@@ -1,7 +1,16 @@
 ﻿import { supportedSectionTypes } from '../shared/template-blueprint.mjs';
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
+const blueprintSkillPath = path.join(currentDir, 'blueprint-skill.md');
+const blueprintSkillContent = fs.readFileSync(blueprintSkillPath, 'utf8').trim();
+
 function commonRules() {
   return [
+    blueprintSkillContent,
     '你是低代码页面搭建平台的 AI 模板助手。',
     '你的任务是根据用户需求生成或修改页面蓝图，再由系统把蓝图映射成真实 Schema。',
     `当前只允许使用这些区块类型：${supportedSectionTypes.join('、')}。`,
@@ -208,12 +217,13 @@ export function buildGenerateMessages(prompt) {
     },
     {
       role: 'user',
-      content: [
-        '请根据以下需求生成一份页面蓝图：',
-        prompt,
-        '请确保返回内容适合营销页、活动页、报名页或产品介绍页这类低代码落地页场景。',
-        '请严格参考下面这个 JSON 结构示例来输出，字段名必须保持一致，sections 中只能使用允许的 kind。',
-        blueprintExample(),
+        content: [
+          '请根据以下需求生成一份页面蓝图：',
+          prompt,
+          '请先判断最适合的页面场景，再在允许的区块和字段范围内输出。',
+          '请确保返回内容适合营销页、活动页、报名页或产品介绍页这类低代码落地页场景。',
+          '请严格参考下面这个 JSON 结构示例来输出，字段名必须保持一致，sections 中只能使用允许的 kind。',
+          blueprintExample(),
       ].join('\n'),
     },
   ];
@@ -229,13 +239,14 @@ export function buildRefineMessages(prompt, baseSchema) {
       role: 'user',
       content: [
         '下面是当前页面的摘要，请先理解当前页面结构，再根据我的要求返回一份新的完整页面蓝图。',
-        '当前页面摘要：',
-        summarizeSchemaForBlueprint(baseSchema),
-        '修改要求：',
-        prompt,
-        '要求：保留合理的已有结构，只在必要处调整；如果用户明确要求新增模块，可以补充新的模块。',
-        '请严格参考下面这个 JSON 结构示例来输出，字段名必须保持一致，sections 中只能使用允许的 kind。',
-        blueprintExample(),
+          '当前页面摘要：',
+          summarizeSchemaForBlueprint(baseSchema),
+          '修改要求：',
+          prompt,
+          '请优先保留当前页面中合理的结构，只修改必要的部分。',
+          '要求：保留合理的已有结构，只在必要处调整；如果用户明确要求新增模块，可以补充新的模块。',
+          '请严格参考下面这个 JSON 结构示例来输出，字段名必须保持一致，sections 中只能使用允许的 kind。',
+          blueprintExample(),
       ].join('\n'),
     },
   ];

@@ -65,6 +65,12 @@ function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function isAbortError(error: unknown) {
+  return error instanceof DOMException
+    ? error.name === 'AbortError'
+    : error instanceof Error && error.name === 'AbortError';
+}
+
 function getTemplateSourceLabel(source: 'manual' | 'ai' | 'imported' | undefined) {
   if (source === 'ai') return 'AI 生成';
   if (source === 'imported') return '导入模板';
@@ -161,6 +167,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
   const templateCardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const lastImportedTemplateIdRef = useRef<string | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
+  const activeStreamControllerRef = useRef<AbortController | null>(null);
 
   const [assistantMode, setAssistantMode] = useState<AssistantMode>('generate');
   const [assistantCapability, setAssistantCapability] = useState<AssistantCapability>('checking');
@@ -321,6 +328,8 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     pushMessage('user', value);
     setAssistantBusy(true);
     const streamMessageId = createAssistantStreamMessage();
+    const controller = new AbortController();
+    activeStreamControllerRef.current = controller;
 
     try {
       const chatResult = await chatTemplateByAIStream({
@@ -340,6 +349,8 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
           if (!text) return;
           appendAssistantMessageText(streamMessageId, text);
         },
+      }, {
+        signal: controller.signal,
       });
 
       setPreviousResponseId(chatResult.responseId ?? null);
@@ -356,6 +367,8 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
               if (!text) return;
               setAssistantMessageText(generationMessageId, text);
             },
+          }, {
+            signal: controller.signal,
           });
           setPreviousResponseId(result.responseId ?? chatResult.responseId ?? null);
           setGeneratedResult(result);
@@ -400,6 +413,10 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
         }
       }
     } catch (error) {
+      if (isAbortError(error)) {
+        setAssistantMessageText(streamMessageId, '本次生成已中断，你可以继续补充要求后重新开始。');
+        return;
+      }
       if (assistantMode === 'refine' && activeConversationSchema) {
         setAssistantCapability('fallback');
         setPreviousResponseId(null);
@@ -434,6 +451,9 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
         );
       }
     } finally {
+      if (activeStreamControllerRef.current === controller) {
+        activeStreamControllerRef.current = null;
+      }
       setAssistantBusy(false);
     }
   };
@@ -494,6 +514,8 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     pushMessage('user', value);
     setAssistantBusy(true);
     const streamMessageId = createAssistantStreamMessage();
+    const controller = new AbortController();
+    activeStreamControllerRef.current = controller;
 
     let result: AiTemplateResult;
     try {
@@ -506,10 +528,20 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
           if (!text) return;
           setAssistantMessageText(streamMessageId, text);
         },
+      }, {
+        signal: controller.signal,
       });
       setPreviousResponseId(aiResult.responseId ?? null);
       result = aiResult;
     } catch (error) {
+      if (isAbortError(error)) {
+        setAssistantMessageText(streamMessageId, '本次修改已中断，当前页面保持不变，你可以继续重新描述。');
+        if (activeStreamControllerRef.current === controller) {
+          activeStreamControllerRef.current = null;
+        }
+        setAssistantBusy(false);
+        return;
+      }
       setAssistantCapability('fallback');
       setPreviousResponseId(null);
       setAssistantMessageText(
@@ -522,7 +554,15 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     setRefinedResult(result);
     pushMessage('assistant', result.summary);
     pushMessage('assistant', result.suggestions.join(' '));
+    if (activeStreamControllerRef.current === controller) {
+      activeStreamControllerRef.current = null;
+    }
     setAssistantBusy(false);
+  };
+
+  const handleAbortAssistant = () => {
+    activeStreamControllerRef.current?.abort();
+    activeStreamControllerRef.current = null;
   };
 
   const handleSubmit = () => {
@@ -994,6 +1034,11 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
                       ? '补充并重新生成'
                       : '发送回答'}
             </button>
+            {assistantBusy ? (
+              <button type="button" className="published-secondary-action" onClick={handleAbortAssistant}>
+                停止生成
+              </button>
+            ) : null}
           </div>
         </aside>
       </div>
