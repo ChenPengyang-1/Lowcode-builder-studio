@@ -1,11 +1,6 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
-import { EditorShell } from './components/EditorShell';
-import { DashboardPage } from './pages/DashboardPage';
-import { LoginPage } from './pages/LoginPage';
-import { PublishedPage } from './pages/PublishedPage';
-import { SettingsPage } from './pages/SettingsPage';
 import {
   clearAuthSession,
   getStoredAuthSession,
@@ -15,6 +10,30 @@ import {
 import { getStoredThemeMode, persistThemeMode, type ThemeMode } from './utils/theme';
 
 type AppRoute = 'dashboard' | 'editor' | 'published' | 'settings';
+
+const DashboardPage = lazy(() =>
+  import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage })),
+);
+const EditorShell = lazy(() =>
+  import('./components/EditorShell').then((module) => ({ default: module.EditorShell })),
+);
+const LoginPage = lazy(() =>
+  import('./pages/LoginPage').then((module) => ({ default: module.LoginPage })),
+);
+const PublishedPage = lazy(() =>
+  import('./pages/PublishedPage').then((module) => ({ default: module.PublishedPage })),
+);
+const SettingsPage = lazy(() =>
+  import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })),
+);
+
+function RouteLoading() {
+  return (
+    <div className="route-loading">
+      <span>正在加载页面模块...</span>
+    </div>
+  );
+}
 
 function renderProtectedRoute(
   authSession: AuthSession | null,
@@ -98,7 +117,7 @@ function ProtectedApp({
       themeMode={themeMode}
       onToggleTheme={handleToggleTheme}
     >
-      {content}
+      <Suspense fallback={<RouteLoading />}>{content}</Suspense>
     </AppShell>
   );
 }
@@ -138,16 +157,18 @@ export default function App() {
   };
 
   return (
-    <Routes>
-      <Route
-        path="/login"
-        element={<LoginPage onLogin={handleLogin} />}
-      />
-      <Route path="/dashboard" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
-      <Route path="/editor" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
-      <Route path="/published" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
-      <Route path="/settings" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
-      <Route path="*" element={<Navigate to="/login" replace />} />
-    </Routes>
+    <Suspense fallback={<RouteLoading />}>
+      <Routes>
+        <Route
+          path="/login"
+          element={<LoginPage onLogin={handleLogin} />}
+        />
+        <Route path="/dashboard" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
+        <Route path="/editor" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
+        <Route path="/published" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
+        <Route path="/settings" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    </Suspense>
   );
 }

@@ -29,8 +29,6 @@ interface EditorState {
   mode: 'edit' | 'preview';
   history: PageSchema[];
   future: PageSchema[];
-  dragMaterialType: string | null;
-  dragNodeId: string | null;
   canUndo: boolean;
   canRedo: boolean;
   submissions: Record<string, unknown>[];
@@ -38,8 +36,6 @@ interface EditorState {
   activeTemplateId: string | null;
   addMaterial: (type: string) => void;
   insertMaterial: (type: string, parentId?: string | null, index?: number) => void;
-  setDragMaterialType: (type: string | null) => void;
-  setDragNodeId: (id: string | null) => void;
   moveNodeByDrop: (sourceId: string, parentId?: string | null, index?: number) => void;
   selectNode: (id: string | null) => void;
   updateNodeProps: (id: string, patch: Record<string, ComponentValue>) => void;
@@ -195,8 +191,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   mode: 'edit',
   history: [],
   future: [],
-  dragMaterialType: null,
-  dragNodeId: null,
   canUndo: false,
   canRedo: false,
   submissions: [],
@@ -215,12 +209,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       applySchemaChange(state, {
         ...state.schema,
         nodes: insertNode(state.schema.nodes, material.createNode(), parentId, index),
-      }, { dragMaterialType: null }),
+      }),
     );
   },
-
-  setDragMaterialType: (type) => set({ dragMaterialType: type, dragNodeId: null }),
-  setDragNodeId: (id) => set({ dragNodeId: id, dragMaterialType: null }),
 
   // 拖拽已有节点的本质是树结构迁移，而不是单纯的 DOM 排序。
   moveNodeByDrop: (sourceId, parentId = null, index) => {
@@ -228,7 +219,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       applySchemaChange(state, {
         ...state.schema,
         nodes: moveNodeTo(state.schema.nodes, sourceId, parentId, index),
-      }, { dragNodeId: null, selectedId: sourceId }),
+      }, { selectedId: sourceId }),
     );
   },
 
@@ -300,6 +291,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => {
       const target = findNode(state.schema.nodes, selectedId);
       if (!target) return {};
+      // 复制节点时会重新生成整棵子树的 id，避免副本和原节点冲突。
       return applySchemaChange(
         state,
         {
@@ -351,6 +343,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { history, schema, future } = get();
     if (!history.length) return;
 
+    // 当前快照退回 history，当前页面进入 future，形成标准 undo/redo 双栈。
     const previous = cloneSchema(history[history.length - 1]);
     const nextHistory = history.slice(0, -1);
     const nextFuture = [cloneSchema(schema), ...future].slice(0, 50);
@@ -368,6 +361,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { history, schema, future } = get();
     if (!future.length) return;
 
+    // redo 和 undo 相反：从 future 取回一份页面，同时把当前页面推回 history。
     const next = cloneSchema(future[0]);
     const nextFuture = future.slice(1);
     const nextHistory = [...history, cloneSchema(schema)].slice(-50);
@@ -450,6 +444,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const now = new Date().toISOString();
       const shouldPublish = Boolean(options?.publish);
       const source = options?.source ?? 'ai';
+      // AI 结果和导入结果都会先落成模板，再进入草稿/发布流转，这样来源信息不会丢。
       const template: SavedTemplate = {
         id: createId('tpl'),
         name: name?.trim() || `${normalized.schema.pageMeta.title} AI 妯℃澘`,
@@ -468,6 +463,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const normalized = normalizeSchema(get().schema, { fallbackTitle: '草稿模板' });
     if (!normalized.ok) return;
     const current = cloneSchema(normalized.schema);
+    // 草稿更新只覆盖 draftSchema，不会动已经对外可见的 publishedSchema。
     const templates = updateTemplatesList((prev) =>
       prev.map((item) =>
         item.id === templateId
@@ -517,6 +513,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         (parsed as { type?: unknown }).type === TEMPLATE_FILE_TYPE &&
         'template' in parsed
       ) {
+        // 文件导入不是直接相信外部 JSON，而是先归一化模板记录再进入模板中心。
         const normalizedTemplate = normalizeTemplateRecord((parsed as { template?: unknown }).template);
         if (!normalizedTemplate) {
           return { ok: false, message: '模板文件结构不合法，无法导入。' };
@@ -552,6 +549,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         return { ok: false, message: getSchemaImportMessage(normalizedSchema) };
       }
 
+      // 纯 Schema 导入时，会被包成一份新的 imported 草稿模板，方便继续在模板中心流转。
       const nextName = buildImportedTemplateName(
         `${normalizedSchema.schema.pageMeta.title} 妯℃澘`,
         currentTemplates,
@@ -585,6 +583,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return { ok: false, message: '未找到要导出的模板。' };
     }
 
+    // 导出时同时提供模板 JSON 和静态 HTML，两者分别服务继续编辑和对外交付场景。
     return {
       ok: true,
       message: '模板 JSON 与页面 HTML 已生成。',
@@ -647,6 +646,7 @@ export function useSelectedNode(): PageNode | null {
   const schema = useEditorStore((state) => state.schema);
   const selectedId = useEditorStore((state) => state.selectedId);
   if (!selectedId) return null;
+  // 这个 hook 专门把“当前选中节点”这段派生逻辑抽出来，组件层不用重复查树。
   return findNode(schema.nodes, selectedId);
 }
 

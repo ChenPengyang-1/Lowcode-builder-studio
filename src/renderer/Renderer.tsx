@@ -1,5 +1,7 @@
+import { useDraggable } from '@dnd-kit/core';
 import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { CSSProperties, MouseEvent } from 'react';
+import { DropSlot } from '../components/DropSlot';
 import { useEditorStore } from '../store/editorStore';
 import type { FormField, PageNode } from '../types/schema';
 
@@ -8,13 +10,26 @@ interface RendererProps {
   selectedId?: string | null;
   mode?: 'edit' | 'preview';
   onSelect?: (id: string) => void;
-  dragMaterialType?: string | null;
-  dragNodeId?: string | null;
-  onDropMaterial?: (parentId: string | null, index: number) => void;
-  onDropNode?: (sourceId: string, parentId: string | null, index: number) => void;
 }
 
-// 节点交互动作只在预览态运行，避免编辑时误触发业务行为。
+function useNodeDraggable(nodeId: string, mode: 'edit' | 'preview') {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `node:${nodeId}:canvas`,
+    data: {
+      kind: 'node',
+      nodeId,
+    },
+    disabled: mode !== 'edit',
+  });
+
+  return {
+    dragAttributes: mode === 'edit' ? attributes : undefined,
+    dragListeners: mode === 'edit' ? listeners : undefined,
+    dragRef: setNodeRef,
+    isDragging,
+  };
+}
+
 function runActions(node: PageNode) {
   const first = node.actions?.[0];
   if (!first || first.type === 'none') return;
@@ -29,35 +44,11 @@ function runActions(node: PageNode) {
       window.alert('未配置跳转链接');
       return;
     }
+
     window.open(first.payload, '_blank', 'noopener,noreferrer');
   }
 }
 
-const ChildDropZone = memo(function ChildDropZone({
-  active,
-  onDrop,
-  label,
-}: {
-  active: boolean;
-  onDrop: () => void;
-  label: string;
-}) {
-  return (
-    <div
-      className={`child-drop-slot ${active ? 'active' : ''}`}
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={(event) => {
-        event.preventDefault();
-        onDrop();
-      }}
-      title={label}
-    >
-      <span>{label}</span>
-    </div>
-  );
-});
-
-// 表单节点既是可配置的 Schema 区块，也是预览态下可真实交互的表单。
 const FormRenderer = memo(function FormRenderer({
   node,
   selectedId,
@@ -72,6 +63,7 @@ const FormRenderer = memo(function FormRenderer({
   const submitForm = useEditorStore((state) => state.submitForm);
   const fields = (node.props.fields as FormField[] | undefined) ?? [];
   const interactive = mode === 'preview';
+  const { dragAttributes, dragListeners, dragRef, isDragging } = useNodeDraggable(node.id, mode);
 
   const initialValues = useMemo(() => {
     const result: Record<string, string> = {};
@@ -137,15 +129,15 @@ const FormRenderer = memo(function FormRenderer({
 
   return (
     <div
+      ref={dragRef}
       style={node.style as CSSProperties}
       onClick={(event) => {
         event.stopPropagation();
         if (mode === 'edit') onSelect?.(node.id);
       }}
-      className={selectedId === node.id && mode === 'edit' ? 'selected-node' : ''}
-      draggable={mode === 'edit'}
-      onDragStart={() => useEditorStore.getState().setDragNodeId(node.id)}
-      onDragEnd={() => useEditorStore.getState().setDragNodeId(null)}
+      className={`${selectedId === node.id && mode === 'edit' ? 'selected-node' : ''} ${isDragging ? 'dragging-node' : ''}`.trim()}
+      {...dragListeners}
+      {...dragAttributes}
     >
       <div className="form-title">{String(node.props.title ?? '表单')}</div>
 
@@ -157,7 +149,7 @@ const FormRenderer = memo(function FormRenderer({
               {field.required ? <span className="required-dot">*</span> : null}
             </div>
 
-            {field.type === 'textarea' && (
+            {field.type === 'textarea' ? (
               <textarea
                 className="mock-input"
                 placeholder={field.placeholder || field.label}
@@ -166,9 +158,9 @@ const FormRenderer = memo(function FormRenderer({
                 value={values[field.id] ?? ''}
                 onChange={(event) => updateValue(field.id, event.target.value)}
               />
-            )}
+            ) : null}
 
-            {field.type === 'select' && (
+            {field.type === 'select' ? (
               <select
                 className="mock-input"
                 disabled={!interactive}
@@ -182,9 +174,9 @@ const FormRenderer = memo(function FormRenderer({
                   </option>
                 ))}
               </select>
-            )}
+            ) : null}
 
-            {(field.type === 'text' || field.type === 'tel' || field.type === 'email') && (
+            {(field.type === 'text' || field.type === 'tel' || field.type === 'email') ? (
               <input
                 className="mock-input"
                 placeholder={field.placeholder || field.label}
@@ -193,7 +185,7 @@ const FormRenderer = memo(function FormRenderer({
                 value={values[field.id] ?? ''}
                 onChange={(event) => updateValue(field.id, event.target.value)}
               />
-            )}
+            ) : null}
 
             {errors[field.id] ? <div className="field-error">{errors[field.id]}</div> : null}
           </div>
@@ -220,16 +212,18 @@ const NodeFrame = memo(function NodeFrame({
   onSelect?: (id: string) => void;
   children: ReactNode;
 }) {
+  const { dragAttributes, dragListeners, dragRef, isDragging } = useNodeDraggable(node.id, mode);
+
   return (
     <div
-      className={`node-draggable-shell ${selectedId === node.id && mode === 'edit' ? 'selected-node' : ''}`}
-      draggable={mode === 'edit'}
-      onDragStart={() => useEditorStore.getState().setDragNodeId(node.id)}
-      onDragEnd={() => useEditorStore.getState().setDragNodeId(null)}
+      ref={dragRef}
+      className={`node-draggable-shell ${selectedId === node.id && mode === 'edit' ? 'selected-node' : ''} ${isDragging ? 'dragging-node' : ''}`.trim()}
       onClick={(event) => {
         event.stopPropagation();
         if (mode === 'edit') onSelect?.(node.id);
       }}
+      {...dragListeners}
+      {...dragAttributes}
     >
       {mode === 'edit' ? <div className="drag-handle-badge">拖动重排</div> : null}
       {children}
@@ -237,19 +231,9 @@ const NodeFrame = memo(function NodeFrame({
   );
 });
 
-export function Renderer({
-  node,
-  selectedId,
-  mode = 'edit',
-  onSelect,
-  dragMaterialType,
-  dragNodeId,
-  onDropMaterial,
-  onDropNode,
-}: RendererProps) {
+export function Renderer({ node, selectedId, mode = 'edit', onSelect }: RendererProps) {
   if (node.visible === false) return null;
 
-  // Renderer 根据节点类型分发到不同的渲染逻辑。
   const sharedSectionProps = {
     style: node.style as CSSProperties,
   };
@@ -294,7 +278,9 @@ export function Renderer({
     return (
       <NodeFrame node={node} mode={mode} selectedId={selectedId} onSelect={onSelect}>
         <section style={node.style as CSSProperties}>
-          <div className="hero-title" style={{ fontSize: node.style.fontSize || '34px' }}>{String(node.props.title ?? '')}</div>
+          <div className="hero-title" style={{ fontSize: node.style.fontSize || '34px' }}>
+            {String(node.props.title ?? '')}
+          </div>
           <div className="hero-subtitle">{String(node.props.subtitle ?? '')}</div>
           <div className="hero-note">{String(node.props.note ?? '')}</div>
           <button
@@ -372,44 +358,44 @@ export function Renderer({
   return (
     <NodeFrame node={node} mode={mode} selectedId={selectedId} onSelect={onSelect}>
       <section style={node.style as CSSProperties}>
-        {(dragMaterialType || dragNodeId) && mode === 'edit' && (
-          <ChildDropZone
-            active
+        {mode === 'edit' && node.children?.length ? (
+          <DropSlot
+            parentId={node.id}
+            index={0}
+            position="inside"
             label="插入到容器顶部"
-            onDrop={() => {
-              if (dragMaterialType) onDropMaterial?.(node.id, 0);
-              if (dragNodeId) onDropNode?.(dragNodeId, node.id, 0);
-            }}
+            className="child-drop-slot"
           />
-        )}
+        ) : null}
 
         {node.children?.length ? (
           node.children.map((child, index) => (
             <div key={child.id} className="container-child-block">
-              <Renderer
-                node={child}
-                selectedId={selectedId}
-                mode={mode}
-                onSelect={onSelect}
-                dragMaterialType={dragMaterialType}
-                dragNodeId={dragNodeId}
-                onDropMaterial={onDropMaterial}
-                onDropNode={onDropNode}
-              />
-              {(dragMaterialType || dragNodeId) && mode === 'edit' && (
-                <ChildDropZone
-                  active
+              <Renderer node={child} selectedId={selectedId} mode={mode} onSelect={onSelect} />
+              {mode === 'edit' ? (
+                <DropSlot
+                  parentId={node.id}
+                  index={index + 1}
+                  position="inside"
                   label={`插入到容器第 ${index + 1} 个组件后`}
-                  onDrop={() => {
-                    if (dragMaterialType) onDropMaterial?.(node.id, index + 1);
-                    if (dragNodeId) onDropNode?.(dragNodeId, node.id, index + 1);
-                  }}
+                  className="child-drop-slot"
                 />
-              )}
+              ) : null}
             </div>
           ))
         ) : (
-          <div className="empty-slot">容器支持嵌套，你可以把左侧物料或现有节点直接拖到这里。</div>
+          <>
+            <div className="empty-slot">容器支持嵌套，你可以把左侧物料或现有节点直接拖到这里。</div>
+            {mode === 'edit' ? (
+              <DropSlot
+                parentId={node.id}
+                index={0}
+                position="inside"
+                label="拖到这里放进容器"
+                className="child-drop-slot"
+              />
+            ) : null}
+          </>
         )}
       </section>
     </NodeFrame>
