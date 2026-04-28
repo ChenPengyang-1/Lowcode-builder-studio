@@ -112,6 +112,7 @@ function createSchemaRepairMessages(rawText, issues) {
 
 async function requestBlueprintWithChatCompletions(messages) {
   ensureClient();
+  // 第一轮先尽量让模型直接返回合法 JSON。
   const completion = await client.chat.completions.create({
     model,
     messages: withJsonOnlyInstruction(messages),
@@ -127,6 +128,7 @@ async function requestBlueprintWithChatCompletions(messages) {
   try {
     payload = extractJsonPayload(completionText);
   } catch (_error) {
+    // 如果 JSON 语法本身有问题，就走一次专门的修复请求。
     const repairCompletion = await client.chat.completions.create({
       model,
       messages: createRepairMessages(completionText),
@@ -140,6 +142,7 @@ async function requestBlueprintWithChatCompletions(messages) {
 
   let parsed = templateBlueprintSchema.safeParse(payload);
   if (!parsed.success) {
+    // 能 parse 但过不了 schema 时，再按校验错误做一轮结构修复。
     const repairBySchemaCompletion = await client.chat.completions.create({
       model,
       messages: createSchemaRepairMessages(
@@ -165,6 +168,7 @@ async function requestBlueprintWithChatCompletions(messages) {
   return {
     responseId: completion.id,
     blueprint: parsed.data,
+    // 最终对前端暴露的是统一 Schema，而不是模型原始蓝图。
     schema: buildPageSchemaFromBlueprint(parsed.data),
   };
 }

@@ -1,13 +1,34 @@
-﻿import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEditorStore } from '../store/editorStore';
 
 type TemplateSort = 'updated' | 'published' | 'name';
 type TemplateSourceFilter = 'all' | 'manual' | 'ai' | 'imported';
 
+const TEMPLATE_SEARCH_DEBOUNCE = 300;
+const TEMPLATE_ROW_HEIGHT = 236;
+const TEMPLATE_LIST_HEIGHT = 520;
+const TEMPLATE_OVERSCAN = 3;
+
 function getTemplateSourceLabel(source: 'manual' | 'ai' | 'imported' | undefined) {
   if (source === 'ai') return 'AI 生成';
   if (source === 'imported') return '导入模板';
   return '手工搭建';
+}
+
+function useDebouncedValue<T>(value: T, delay: number) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [delay, value]);
+
+  return debouncedValue;
 }
 
 export function TemplatePanel() {
@@ -26,6 +47,9 @@ export function TemplatePanel() {
   const [keyword, setKeyword] = useState('');
   const [sourceFilter, setSourceFilter] = useState<TemplateSourceFilter>('all');
   const [sortBy, setSortBy] = useState<TemplateSort>('updated');
+  const [scrollTop, setScrollTop] = useState(0);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const debouncedKeyword = useDebouncedValue(keyword, TEMPLATE_SEARCH_DEBOUNCE);
 
   const activeTemplate = useMemo(
     () => templates.find((item) => item.id === activeTemplateId) ?? null,
@@ -33,7 +57,7 @@ export function TemplatePanel() {
   );
 
   const filteredTemplates = useMemo(() => {
-    const normalizedKeyword = keyword.trim().toLowerCase();
+    const normalizedKeyword = debouncedKeyword.trim().toLowerCase();
 
     return [...templates]
       .filter((template) =>
@@ -53,13 +77,32 @@ export function TemplatePanel() {
 
         return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
       });
-  }, [keyword, sortBy, sourceFilter, templates]);
+  }, [debouncedKeyword, sortBy, sourceFilter, templates]);
+
+  useEffect(() => {
+    setScrollTop(0);
+    if (listRef.current) {
+      listRef.current.scrollTop = 0;
+    }
+  }, [debouncedKeyword, sortBy, sourceFilter]);
+
+  const { visibleTemplates, topSpacer, bottomSpacer } = useMemo(() => {
+    const visibleCount = Math.ceil(TEMPLATE_LIST_HEIGHT / TEMPLATE_ROW_HEIGHT) + TEMPLATE_OVERSCAN * 2;
+    const startIndex = Math.max(0, Math.floor(scrollTop / TEMPLATE_ROW_HEIGHT) - TEMPLATE_OVERSCAN);
+    const endIndex = Math.min(filteredTemplates.length, startIndex + visibleCount);
+
+    return {
+      visibleTemplates: filteredTemplates.slice(startIndex, endIndex),
+      topSpacer: startIndex * TEMPLATE_ROW_HEIGHT,
+      bottomSpacer: Math.max(0, (filteredTemplates.length - endIndex) * TEMPLATE_ROW_HEIGHT),
+    };
+  }, [filteredTemplates, scrollTop]);
 
   return (
     <aside className="panel template-panel panel-accent-violet">
       <div className="panel-title">模板中心</div>
       <div className="template-panel-summary">
-        保存当前页面为模板，管理草稿和发布版本。
+        保存当前页面为模板，并统一管理草稿、发布版和导入模板。
       </div>
 
       <div className="template-filter-stack">
@@ -95,7 +138,7 @@ export function TemplatePanel() {
         <button
           type="button"
           onClick={() => {
-            saveAsTemplate(newName);
+            void saveAsTemplate(newName);
             setNewName('');
           }}
         >
@@ -109,50 +152,72 @@ export function TemplatePanel() {
           <div className="template-active-title">{activeTemplate.name}</div>
           <div className="template-tag-row">
             <span className="template-source-tag">{getTemplateSourceLabel(activeTemplate.source)}</span>
-            <span className="template-status-tag">{activeTemplate.publishedSchema ? '已发布' : '草稿'}</span>
+            <span className="template-status-tag">{activeTemplate.hasPublished ? '已发布' : '草稿'}</span>
           </div>
           <div className="template-meta-line">
-            {activeTemplate.publishedSchema ? '已存在已发布版本' : '当前仅有草稿'}
+            {activeTemplate.hasPublished ? '当前模板已有发布版本' : '当前模板暂未发布'}
           </div>
           <div className="template-inline-actions compact-grid">
-            <button type="button" onClick={() => updateTemplateDraft(activeTemplate.id)}>保存草稿</button>
-            <button type="button" onClick={() => publishTemplate(activeTemplate.id)}>发布当前页</button>
+            <button type="button" onClick={() => void updateTemplateDraft(activeTemplate.id)}>保存草稿</button>
+            <button type="button" onClick={() => void publishTemplate(activeTemplate.id)}>发布当前页</button>
           </div>
         </div>
       ) : null}
 
-      <div className="template-list">
+      <div
+        ref={listRef}
+        className="template-list template-virtual-list"
+        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      >
         {filteredTemplates.length ? (
-          filteredTemplates.map((template) => (
-            <div key={template.id} className={`template-card ${template.id === activeTemplateId ? 'active' : ''}`}>
-              <input
-                className="template-name-input"
-                value={template.name}
-                onChange={(event) => renameTemplate(template.id, event.target.value)}
-              />
-              <div className="template-tag-row">
-                <span className="template-source-tag">{getTemplateSourceLabel(template.source)}</span>
-                <span className="template-status-tag">{template.publishedSchema ? '已发布' : '草稿'}</span>
+          <>
+            <div style={{ height: topSpacer }} />
+            {visibleTemplates.map((template) => (
+              <div key={template.id} className="template-virtual-row">
+                <div className={`template-card ${template.id === activeTemplateId ? 'active' : ''}`}>
+                  <input
+                    className="template-name-input"
+                    value={template.name}
+                    onChange={(event) => void renameTemplate(template.id, event.target.value)}
+                  />
+                  <div className="template-tag-row">
+                    <span className="template-source-tag">{getTemplateSourceLabel(template.source)}</span>
+                    <span className="template-status-tag">{template.hasPublished ? '已发布' : '草稿'}</span>
+                  </div>
+                  <div className="template-meta-line">
+                    最近更新：{new Date(template.updatedAt).toLocaleString()}
+                  </div>
+                  <div className="template-meta-line">
+                    节点数：草稿 {template.draftNodeCount}
+                    {template.hasPublished ? ` / 发布 ${template.publishedNodeCount}` : ''}
+                  </div>
+                  <div className="template-inline-actions compact-grid">
+                    <button type="button" onClick={() => void loadTemplateDraft(template.id)}>加载草稿</button>
+                    <button
+                      type="button"
+                      onClick={() => void loadTemplatePublished(template.id)}
+                      disabled={!template.hasPublished}
+                    >
+                      查看发布版
+                    </button>
+                    <button type="button" onClick={() => void updateTemplateDraft(template.id)}>覆盖草稿</button>
+                    <button type="button" onClick={() => void publishTemplate(template.id)}>重新发布</button>
+                    <button
+                      type="button"
+                      className="danger full-span"
+                      onClick={() => void deleteTemplate(template.id)}
+                    >
+                      删除模板
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="template-meta-line">最近更新：{new Date(template.updatedAt).toLocaleString()}</div>
-              <div className="template-inline-actions compact-grid">
-                <button type="button" onClick={() => loadTemplateDraft(template.id)}>加载草稿</button>
-                <button
-                  type="button"
-                  onClick={() => loadTemplatePublished(template.id)}
-                  disabled={!template.publishedSchema}
-                >
-                  查看发布版
-                </button>
-                <button type="button" onClick={() => updateTemplateDraft(template.id)}>覆盖草稿</button>
-                <button type="button" onClick={() => publishTemplate(template.id)}>重新发布</button>
-                <button type="button" className="danger full-span" onClick={() => deleteTemplate(template.id)}>删除模板</button>
-              </div>
-            </div>
-          ))
+            ))}
+            <div style={{ height: bottomSpacer }} />
+          </>
         ) : (
           <div className="empty-tip">
-            {templates.length ? '当前筛选条件下没有匹配的模板。' : '还没有模板，先把当前页面保存成一个模板。'}
+            {templates.length ? '当前筛选条件下没有匹配的模板。' : '还没有模板，先把当前页面保存成一份模板。'}
           </div>
         )}
       </div>

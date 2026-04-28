@@ -1,4 +1,5 @@
-﻿import type { PageSchema } from '../types/schema';
+import { fetchEventSource } from '@microsoft/fetch-event-source';
+import type { PageSchema } from '../types/schema';
 
 export interface AiTemplateApiResult {
   ok: boolean;
@@ -50,11 +51,6 @@ interface StreamOptions {
   signal?: AbortSignal;
 }
 
-interface SseEventPayload {
-  event: string;
-  data: unknown;
-}
-
 async function postJson<TBody, TResult>(url: string, body: TBody): Promise<TResult> {
   const response = await fetch(url, {
     method: 'POST',
@@ -72,22 +68,9 @@ async function postJson<TBody, TResult>(url: string, body: TBody): Promise<TResu
   return data;
 }
 
-function parseSseChunk(chunk: string): SseEventPayload[] {
-  return chunk
-    .split('\n\n')
-    .map((block) => block.trim())
-    .filter(Boolean)
-    .flatMap((block) => {
-      const lines = block.split('\n');
-      const event = lines.find((line) => line.startsWith('event:'))?.slice(6).trim() ?? 'message';
-      const dataLine = lines.find((line) => line.startsWith('data:'))?.slice(5).trim() ?? '{}';
-
-      try {
-        return [{ event, data: JSON.parse(dataLine) }];
-      } catch {
-        return [];
-      }
-    });
+async function readErrorMessage(response: Response) {
+  const fallback = await response.json().catch(() => ({ message: 'AI 请求失败。' }));
+  return fallback.message || 'AI 请求失败。';
 }
 
 async function postSse<TBody, TResult>(
@@ -96,7 +79,9 @@ async function postSse<TBody, TResult>(
   handlers: StreamHandlers<TResult>,
   options: StreamOptions = {},
 ): Promise<TResult> {
-  const response = await fetch(url, {
+  let finalResult: TResult | null = null;
+
+  await fetchEventSource(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -104,49 +89,55 @@ async function postSse<TBody, TResult>(
     },
     body: JSON.stringify(body),
     signal: options.signal,
-  });
-
-  if (!response.ok || !response.body) {
-    const fallback = await response.json().catch(() => ({ message: 'AI 请求失败。' }));
-    throw new Error(fallback.message || 'AI 请求失败。');
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder('utf-8');
-  let buffer = '';
-  let finalResult: TResult | null = null;
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const boundary = buffer.lastIndexOf('\n\n');
-    if (boundary === -1) continue;
-
-    const complete = buffer.slice(0, boundary);
-    buffer = buffer.slice(boundary + 2);
-
-    const events = parseSseChunk(complete);
-    for (const item of events) {
-      if (item.event === 'status') {
-        handlers.onStatus?.((item.data as { text?: string }).text || '');
+    openWhenHidden: true,
+    async onopen(response) {
+      if (response.ok && response.body) {
+        return;
       }
 
-      if (item.event === 'reply_delta') {
-        handlers.onReplyDelta?.((item.data as { text?: string }).text || '');
+      throw new Error(await readErrorMessage(response));
+    },
+    onmessage(event) {
+      if (!event.data || event.event === 'done') {
+        return;
       }
 
-      if (item.event === 'result') {
-        finalResult = item.data as TResult;
+      let payload: unknown;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        throw new Error('AI 流式响应解析失败。');
+      }
+
+      if (event.event === 'status') {
+        handlers.onStatus?.((payload as { text?: string }).text || '');
+        return;
+      }
+
+      if (event.event === 'reply_delta') {
+        handlers.onReplyDelta?.((payload as { text?: string }).text || '');
+        return;
+      }
+
+      if (event.event === 'result') {
+        finalResult = payload as TResult;
         handlers.onResult?.(finalResult);
+        return;
       }
 
-      if (item.event === 'error') {
-        throw new Error((item.data as { message?: string }).message || 'AI 流式请求失败。');
+      if (event.event === 'error') {
+        throw new Error((payload as { message?: string }).message || 'AI 流式请求失败。');
       }
-    }
-  }
+    },
+    onclose() {
+      if (!finalResult) {
+        throw new Error('AI 流式请求未返回最终结果。');
+      }
+    },
+    onerror(error) {
+      throw error;
+    },
+  });
 
   if (!finalResult) {
     throw new Error('AI 流式请求未返回最终结果。');

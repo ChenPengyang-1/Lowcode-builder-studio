@@ -9,6 +9,7 @@ const blueprintSkillPath = path.join(currentDir, 'blueprint-skill.md');
 const blueprintSkillContent = fs.readFileSync(blueprintSkillPath, 'utf8').trim();
 
 function commonRules() {
+  // skill 文件负责承载固定约束，这样生成/修改时不需要每次把同样的规则重写一遍。
   return [
     blueprintSkillContent,
     '你是低代码页面搭建平台的 AI 模板助手。',
@@ -84,6 +85,7 @@ function summarizeSchemaForBlueprint(baseSchema) {
   const pageMeta = baseSchema.pageMeta ?? {};
   const nodes = Array.isArray(baseSchema.nodes) ? baseSchema.nodes : [];
 
+  // refine 场景不会把整份 Schema 原样喂给模型，而是先压缩成更容易理解的页面摘要。
   const nodeSummaries = nodes.slice(0, 10).map((node, index) => {
     const type = node?.type ?? 'unknown';
     const name = node?.name ?? `区块${index + 1}`;

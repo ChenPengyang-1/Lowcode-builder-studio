@@ -1742,8 +1742,8 @@ select:focus {
 }
 
 .left-sticky-column .template-panel {
-  flex: 0 0 29%;
-  min-height: 210px;
+  flex: 0 0 46%;
+  min-height: 420px;
 }
 
 .left-sticky-column .material-panel {
@@ -2314,9 +2314,40 @@ select:focus {
   padding: 12px;
 }
 
+.template-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .template-card.active {
   border-color: #60a5fa;
   box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.16), 0 10px 24px rgba(59, 130, 246, 0.08);
+}
+
+.template-virtual-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
+
+.template-virtual-row {
+  height: 236px;
+}
+
+.template-virtual-row .template-card {
+  height: calc(100% - 12px);
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.template-virtual-row .template-card {
+  padding: 10px;
 }
 
 .template-active-label {
@@ -2364,6 +2395,11 @@ select:focus {
   background: rgba(255, 255, 255, 0.9);
 }
 
+.template-virtual-row .template-name-input {
+  margin-bottom: 6px;
+  padding: 8px 10px;
+}
+
 .template-meta-line {
   color: #64748b;
   font-size: 12px;
@@ -2371,11 +2407,23 @@ select:focus {
   margin-bottom: 8px;
 }
 
+.template-virtual-row .template-meta-line {
+  margin-top: 4px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .template-tag-row {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 8px;
+}
+
+.template-virtual-row .template-tag-row {
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
 .template-source-tag,
@@ -2387,6 +2435,31 @@ select:focus {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
+}
+
+.template-virtual-row .template-source-tag,
+.template-virtual-row .template-status-tag {
+  min-height: 22px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
+.template-virtual-row .template-inline-actions.compact-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.template-virtual-row .template-inline-actions.compact-grid button {
+  padding: 8px 6px;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.template-virtual-row .template-inline-actions .full-span {
+  grid-column: auto;
 }
 
 .template-source-tag {

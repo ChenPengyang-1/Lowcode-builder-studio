@@ -2,6 +2,7 @@
 import { useNavigate } from 'react-router-dom';
 import { SchemaPreview } from '../components/SchemaPreview';
 import { useEditorStore } from '../store/editorStore';
+import type { SavedTemplate, TemplateSummary } from '../types/schema';
 import type { AuthSession } from '../utils/auth';
 import {
   generateTemplateFromPrompt,
@@ -78,6 +79,7 @@ function getTemplateSourceLabel(source: 'manual' | 'ai' | 'imported' | undefined
 }
 
 function buildActionPrompt(messages: ChatMessage[], latestUserText: string, action: 'generate' | 'refine') {
+  // 这里会把最近几轮对话重新整理成一段更完整的任务指令，后续生成/修改都基于它继续。
   const recentTranscript = [...messages, { id: 'latest', role: 'user' as const, text: latestUserText }]
     .slice(-8)
     .map((message) => `${message.role === 'user' ? '用户' : '助手'}：${message.text}`)
@@ -156,12 +158,13 @@ interface PublishedPageProps {
 
 export function PublishedPage({ currentUser }: PublishedPageProps) {
   const navigate = useNavigate();
-  const templates = useEditorStore((state) => state.templates);
+  const templates = useEditorStore((state) => state.templates as TemplateSummary[]);
   const loadSchema = useEditorStore((state) => state.loadSchema);
   const loadTemplatePublished = useEditorStore((state) => state.loadTemplatePublished);
   const createTemplateFromSchema = useEditorStore((state) => state.createTemplateFromSchema);
   const importTemplateFile = useEditorStore((state) => state.importTemplateFile);
   const exportTemplateFile = useEditorStore((state) => state.exportTemplateFile);
+  const getTemplateDetail = useEditorStore((state) => state.getTemplateDetail);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const templateCardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -187,6 +190,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
   });
   const [generatedResult, setGeneratedResult] = useState<AiTemplateResult | null>(null);
   const [refinedResult, setRefinedResult] = useState<AiTemplateResult | null>(null);
+  const [selectedTemplateDetail, setSelectedTemplateDetail] = useState<SavedTemplate | null>(null);
   const [templateKeyword, setTemplateKeyword] = useState('');
   const [templateSourceFilter, setTemplateSourceFilter] = useState<TemplateSourceFilter>('all');
   const [templateSortBy, setTemplateSortBy] = useState<TemplateSort>('published');
@@ -195,7 +199,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     () =>
       templates.filter(
         (item) =>
-          item.publishedSchema ||
+          item.hasPublished ||
           item.id === selectedTemplateId ||
           item.id === lastImportedTemplateIdRef.current,
       ),
@@ -227,7 +231,8 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
   }, [publishedTemplates, templateKeyword, templateSourceFilter, templateSortBy]);
 
   const selectedTemplate = publishedTemplates.find((item) => item.id === selectedTemplateId) ?? null;
-  const selectedTemplateSchema = selectedTemplate?.publishedSchema ?? selectedTemplate?.draftSchema ?? null;
+  const selectedTemplateSchema =
+    selectedTemplateDetail?.publishedSchema ?? selectedTemplateDetail?.draftSchema ?? null;
   const isAiMode = assistantCapability === 'ai';
   const isFallbackMode = assistantCapability === 'fallback';
   const generatedConversationSchema = refinedResult?.schema ?? generatedResult?.schema ?? null;
@@ -282,6 +287,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
   const resetToGenerateMode = () => {
     setAssistantMode('generate');
     setSelectedTemplateId(null);
+    setSelectedTemplateDetail(null);
     setPrompt('');
     setPreviousResponseId(null);
     setGeneratedResult(null);
@@ -297,11 +303,15 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     setMessages(createGenerateWelcome(assistantCapability));
   };
 
-  const enterRefineMode = (templateId: string) => {
+  const enterRefineMode = async (templateId: string) => {
     const template = publishedTemplates.find((item) => item.id === templateId);
-    const schema = template?.publishedSchema ?? template?.draftSchema;
-    if (!template || !schema) return;
+    if (!template) return;
 
+    const detail = await getTemplateDetail(templateId);
+    const schema = detail?.publishedSchema ?? detail?.draftSchema;
+    if (!schema) return;
+
+    setSelectedTemplateDetail(detail);
     setAssistantMode('refine');
     setSelectedTemplateId(templateId);
     setPrompt('');
@@ -332,6 +342,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     activeStreamControllerRef.current = controller;
 
     try {
+      // 第一段先走 chat：让模型先完成自然对话和意图判断，再决定要不要进入 generate/refine。
       const chatResult = await chatTemplateByAIStream({
         message: value,
         currentSchema: activeConversationSchema,
@@ -359,6 +370,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
       if (chatResult.intent === 'generate' && chatResult.actionPrompt.trim()) {
         const generationMessageId = createAssistantStreamMessage();
         try {
+          // 第二段再走 generate：把整理后的 actionPrompt 当成真正的页面生成指令。
           const result = await generateTemplateByAIStream({
             prompt: buildActionPrompt(nextMessages, chatResult.actionPrompt, 'generate'),
             previousResponseId: chatResult.responseId ?? previousResponseId,
@@ -398,6 +410,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
       if (chatResult.intent === 'refine' && chatResult.actionPrompt.trim() && activeConversationSchema) {
         const refineMessageId = createAssistantStreamMessage();
         setAssistantMessageText(refineMessageId, '我已经理解了这次修改意图，正在把它落到当前页面结构上...');
+        // 修改链路目前采用“AI 理解 + 本地规则落地”，优先保证结构稳定。
         const fallbackResult = refineTemplateFromPrompt(
           activeConversationSchema,
           chatResult.actionPrompt || value,
@@ -519,6 +532,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
 
     let result: AiTemplateResult;
     try {
+      // refine 会优先尝试真实 AI；只有失败时才切到本地规则兜底。
       const aiResult = await refineTemplateByAIStream({
         prompt: value,
         baseSchema,
@@ -587,13 +601,13 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     }
   };
 
-  const handleUseInEditor = () => {
+  const handleUseInEditor = async () => {
     if (!previewSchema) return;
 
     if (assistantMode === 'refine' && selectedTemplateId) {
       loadSchema(previewSchema, selectedTemplateId);
     } else {
-      const templateId = createTemplateFromSchema(previewSchema, previewSchema.pageMeta.title, {
+      const templateId = await createTemplateFromSchema(previewSchema, previewSchema.pageMeta.title, {
         source: 'ai',
         publish: false,
       });
@@ -603,10 +617,10 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     navigate('/editor');
   };
 
-  const handleSavePreviewToTemplateCenter = () => {
+  const handleSavePreviewToTemplateCenter = async () => {
     if (!previewSchema) return;
 
-    const templateId = createTemplateFromSchema(previewSchema, previewSchema.pageMeta.title, {
+    const templateId = await createTemplateFromSchema(previewSchema, previewSchema.pageMeta.title, {
       source: 'ai',
       publish: true,
     });
@@ -619,6 +633,15 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     setFileActionMessage('已发布到模板中心，并自动选中当前模板。');
     setAssistantMode('refine');
     setSelectedTemplateId(templateId);
+    setSelectedTemplateDetail({
+      id: templateId,
+      name: previewSchema.pageMeta.title,
+      draftSchema: previewSchema,
+      publishedSchema: previewSchema,
+      updatedAt: new Date().toISOString(),
+      publishedAt: new Date().toISOString(),
+      source: 'ai',
+    });
     setPrompt('');
     setPreviousResponseId(null);
     setGeneratedResult(null);
@@ -628,9 +651,9 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     );
   };
 
-  const handleLoadPublishedToEditor = () => {
-    if (!selectedTemplateId || !selectedTemplate?.publishedSchema) return;
-    loadTemplatePublished(selectedTemplateId);
+  const handleLoadPublishedToEditor = async () => {
+    if (!selectedTemplateId || !selectedTemplate?.hasPublished) return;
+    await loadTemplatePublished(selectedTemplateId);
     navigate('/editor');
   };
 
@@ -667,19 +690,20 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
         return;
       }
 
-      const result = importTemplateFile(text);
+      const result = await importTemplateFile(text);
       setFileActionMessage(result.message);
 
       if (result.ok && result.templateId) {
         lastImportedTemplateIdRef.current = result.templateId;
         setAssistantMode('refine');
         setSelectedTemplateId(result.templateId);
+        setSelectedTemplateDetail(result.template ?? null);
         setPrompt('');
         setPreviousResponseId(null);
         setGeneratedResult(null);
         setRefinedResult(null);
 
-        const importedTemplate = templates.find((item) => item.id === result.templateId);
+        const importedTemplate = result.template ?? null;
         const importedSchema = importedTemplate?.publishedSchema ?? importedTemplate?.draftSchema;
         if (importedTemplate && importedSchema) {
           setMessages(createRefineWelcome(importedTemplate.name, summarizeSchema(importedSchema), assistantCapability));
@@ -698,14 +722,14 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     }
   };
 
-  const handleExportCurrentTemplate = () => {
+  const handleExportCurrentTemplate = async () => {
     if (!selectedTemplateId) return;
 
-    const result = exportTemplateFile(selectedTemplateId);
+    const result = await exportTemplateFile(selectedTemplateId);
     setFileActionMessage(result.message);
 
     if (result.ok && result.files?.length) {
-      result.files.forEach((file, index) => {
+      result.files.forEach((file: { filename: string; content: string; mimeType: string }, index: number) => {
         window.setTimeout(() => {
           triggerFileDownload(file.filename, file.content, file.mimeType);
         }, index * 120);
@@ -716,6 +740,31 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    if (assistantMode !== 'refine' || !selectedTemplateId) {
+      return;
+    }
+
+    if (selectedTemplateDetail?.id === selectedTemplateId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadSelectedTemplateDetail = async () => {
+      const detail = await getTemplateDetail(selectedTemplateId);
+      if (!cancelled) {
+        setSelectedTemplateDetail(detail);
+      }
+    };
+
+    void loadSelectedTemplateDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [assistantMode, getTemplateDetail, selectedTemplateDetail?.id, selectedTemplateId]);
 
   useEffect(() => {
     if (!selectedTemplateId || lastImportedTemplateIdRef.current !== selectedTemplateId) {
@@ -875,7 +924,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
                   <strong>{template.name}</strong>
                   <div className="template-tag-row">
                     <span className="template-source-tag">{getTemplateSourceLabel(template.source)}</span>
-                    <span className="template-status-tag">{template.publishedSchema ? '已发布' : '草稿'}</span>
+                    <span className="template-status-tag">{template.hasPublished ? '已发布' : '草稿'}</span>
                   </div>
                   <span>
                     {template.publishedAt
@@ -903,7 +952,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
               新建一版模板
             </button>
 
-            {assistantMode === 'refine' && selectedTemplate?.publishedSchema ? (
+            {assistantMode === 'refine' && selectedTemplate?.hasPublished ? (
               <button type="button" onClick={handleLoadPublishedToEditor}>
                 载入当前发布版本到编辑器
               </button>

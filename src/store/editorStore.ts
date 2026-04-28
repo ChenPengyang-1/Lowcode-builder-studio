@@ -1,5 +1,5 @@
-﻿import { create } from 'zustand';
-import type { ComponentValue, PageNode, PageSchema, SavedTemplate } from '../types/schema';
+import { create } from 'zustand';
+import type { ComponentValue, PageNode, PageSchema, SavedTemplate, TemplateSummary } from '../types/schema';
 import { materialRegistry } from '../materials/registry';
 import { createId } from '../utils/id';
 import { getSchemaImportMessage, normalizeSchema, normalizeTemplateRecord } from '../utils/schemaRuntime';
@@ -10,6 +10,16 @@ import {
   TEMPLATE_FILE_TYPE,
 } from '../utils/templateTransfer';
 import { buildStandalonePageAsset, type ExportedFileAsset } from '../utils/pageExport';
+import {
+  bootstrapTemplates,
+  createTemplateRecord,
+  deleteTemplateRecord,
+  fetchTemplateDetail,
+  fetchTemplateSummaries,
+  publishTemplateRecord,
+  renameTemplateRecord,
+  updateTemplateDraftRecord,
+} from '../utils/templateApi';
 import {
   deepCloneNode,
   deleteNode,
@@ -32,8 +42,12 @@ interface EditorState {
   canUndo: boolean;
   canRedo: boolean;
   submissions: Record<string, unknown>[];
-  templates: SavedTemplate[];
+  templates: TemplateSummary[];
   activeTemplateId: string | null;
+  templateDetails: Record<string, SavedTemplate>;
+  templatesHydrated: boolean;
+  hydrateTemplates: () => Promise<void>;
+  getTemplateDetail: (templateId: string) => Promise<SavedTemplate | null>;
   addMaterial: (type: string) => void;
   insertMaterial: (type: string, parentId?: string | null, index?: number) => void;
   moveNodeByDrop: (sourceId: string, parentId?: string | null, index?: number) => void;
@@ -54,7 +68,7 @@ interface EditorState {
   loadSchema: (schema: PageSchema, activeTemplateId?: string | null) => void;
   exportSchema: () => string;
   submitForm: (payload: Record<string, unknown>) => void;
-  saveAsTemplate: (name?: string) => void;
+  saveAsTemplate: (name?: string) => Promise<void>;
   createTemplateFromSchema: (
     schema: PageSchema,
     name?: string,
@@ -62,23 +76,22 @@ interface EditorState {
       source?: SavedTemplate['source'];
       publish?: boolean;
     },
-  ) => string;
-  updateTemplateDraft: (templateId: string) => void;
-  publishTemplate: (templateId: string) => void;
-  importTemplateFile: (text: string) => { ok: boolean; message: string; templateId?: string };
-  exportTemplateFile: (templateId: string) => { ok: boolean; message: string; files?: ExportedFileAsset[] };
-  loadTemplateDraft: (templateId: string) => void;
-  loadTemplatePublished: (templateId: string) => void;
-  renameTemplate: (templateId: string, name: string) => void;
-  deleteTemplate: (templateId: string) => void;
+  ) => Promise<string>;
+  updateTemplateDraft: (templateId: string) => Promise<void>;
+  publishTemplate: (templateId: string) => Promise<void>;
+  importTemplateFile: (text: string) => Promise<{ ok: boolean; message: string; templateId?: string; template?: SavedTemplate }>;
+  exportTemplateFile: (templateId: string) => Promise<{ ok: boolean; message: string; files?: ExportedFileAsset[] }>;
+  loadTemplateDraft: (templateId: string) => Promise<void>;
+  loadTemplatePublished: (templateId: string) => Promise<void>;
+  renameTemplate: (templateId: string, name: string) => Promise<void>;
+  deleteTemplate: (templateId: string) => Promise<void>;
 }
 
 function cloneSchema(schema: PageSchema): PageSchema {
   return JSON.parse(JSON.stringify(schema));
 }
 
-// 模板记录先存到本地，方便前端原型演示草稿/发布流程。
-function loadTemplates(): SavedTemplate[] {
+function loadLegacyTemplates(): SavedTemplate[] {
   if (typeof window === 'undefined') return [];
   try {
     const raw = window.localStorage.getItem(TEMPLATE_STORAGE_KEY);
@@ -94,9 +107,51 @@ function loadTemplates(): SavedTemplate[] {
   }
 }
 
-function persistTemplates(templates: SavedTemplate[]) {
+function persistLegacyTemplates(templates: SavedTemplate[]) {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(templates));
+}
+
+function updateLegacyTemplatesList(updater: (templates: SavedTemplate[]) => SavedTemplate[]) {
+  const next = updater(loadLegacyTemplates());
+  persistLegacyTemplates(next);
+  return next;
+}
+
+function countNodes(nodes: PageNode[]): number {
+  return nodes.reduce((total, node) => total + 1 + countNodes(node.children ?? []), 0);
+}
+
+function toTemplateSummary(template: SavedTemplate): TemplateSummary {
+  return {
+    id: template.id,
+    name: template.name,
+    updatedAt: template.updatedAt,
+    publishedAt: template.publishedAt ?? null,
+    source: template.source,
+    hasPublished: Boolean(template.publishedSchema),
+    draftNodeCount: countNodes(template.draftSchema.nodes),
+    publishedNodeCount: template.publishedSchema ? countNodes(template.publishedSchema.nodes) : 0,
+    thumbnailUrl: null,
+  };
+}
+
+function sortTemplateSummaries(templates: TemplateSummary[]) {
+  return [...templates].sort(
+    (left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
+  );
+}
+
+function mergeTemplateSummary(templates: TemplateSummary[], summary: TemplateSummary) {
+  const next = templates.filter((item) => item.id !== summary.id);
+  return sortTemplateSummaries([summary, ...next]);
+}
+
+function buildDetailsMap(templates: SavedTemplate[]) {
+  return templates.reduce<Record<string, SavedTemplate>>((accumulator, template) => {
+    accumulator[template.id] = template;
+    return accumulator;
+  }, {});
 }
 
 // 默认演示 Schema 会在首次进入编辑器时生成一份完整的落地页骨架。
@@ -118,7 +173,6 @@ function makeDemoSchema(): PageSchema {
 }
 
 const initialSchema = makeDemoSchema();
-const initialTemplates = loadTemplates();
 
 function getSnapshotStacks(history: PageSchema[], future: PageSchema[]) {
   return {
@@ -131,7 +185,6 @@ function pushHistory(history: PageSchema[], schema: PageSchema) {
   return [...history, cloneSchema(schema)].slice(-50);
 }
 
-// 所有 Schema 变更都统一走这里，便于集中维护撤销栈和重做栈。
 function applySchemaChange(
   state: EditorState,
   nextSchema: PageSchema,
@@ -151,28 +204,22 @@ function applySchemaChange(
 function cloneWithNewIds(node: PageNode): PageNode {
   const next: PageNode = deepCloneNode(node);
   next.id = createId(node.type);
-  next.name = `${node.name} 鍓湰`;
+  next.name = `${node.name} 副本`;
   if (next.children?.length) {
     next.children = next.children.map((child) => cloneWithNewIds(child));
   }
   return next;
 }
 
-function updateTemplatesList(updater: (templates: SavedTemplate[]) => SavedTemplate[]): SavedTemplate[] {
-  const next = updater(loadTemplates());
-  persistTemplates(next);
-  return next;
-}
-
-function buildImportedTemplateName(baseName: string, templates: SavedTemplate[]) {
-  const normalizedBase = baseName.trim() || '瀵煎叆妯℃澘';
+function buildImportedTemplateName(baseName: string, templates: TemplateSummary[]) {
+  const normalizedBase = baseName.trim() || '导入模板';
   const existingNames = new Set(templates.map((item) => item.name));
 
   if (!existingNames.has(normalizedBase)) {
     return normalizedBase;
   }
 
-  const firstCandidate = `${normalizedBase}锛堝鍏ワ級`;
+  const firstCandidate = `${normalizedBase}(导入)`;
   if (!existingNames.has(firstCandidate)) {
     return firstCandidate;
   }
@@ -194,14 +241,86 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   canUndo: false,
   canRedo: false,
   submissions: [],
-  templates: initialTemplates,
-  activeTemplateId: initialTemplates[0]?.id ?? null,
+  templates: [],
+  activeTemplateId: null,
+  templateDetails: {},
+  templatesHydrated: false,
+
+  hydrateTemplates: async () => {
+    if (get().templatesHydrated) return;
+
+    const legacyTemplates = loadLegacyTemplates();
+
+    try {
+      let summaries = await fetchTemplateSummaries();
+      if (!summaries.length && legacyTemplates.length) {
+        summaries = await bootstrapTemplates(legacyTemplates);
+      }
+
+      const currentActive = get().activeTemplateId;
+      const nextActive =
+        summaries.find((item) => item.id === currentActive)?.id ?? summaries[0]?.id ?? null;
+
+      set({
+        templates: sortTemplateSummaries(summaries),
+        activeTemplateId: nextActive,
+        templateDetails: legacyTemplates.length ? buildDetailsMap(legacyTemplates) : {},
+        templatesHydrated: true,
+      });
+    } catch {
+      const fallbackSummaries = sortTemplateSummaries(legacyTemplates.map((item) => toTemplateSummary(item)));
+      const currentActive = get().activeTemplateId;
+      const nextActive =
+        fallbackSummaries.find((item) => item.id === currentActive)?.id ?? fallbackSummaries[0]?.id ?? null;
+
+      set({
+        templates: fallbackSummaries,
+        activeTemplateId: nextActive,
+        templateDetails: buildDetailsMap(legacyTemplates),
+        templatesHydrated: true,
+      });
+    }
+  },
+
+  getTemplateDetail: async (templateId) => {
+    const cached = get().templateDetails[templateId];
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const template = await fetchTemplateDetail(templateId);
+      if (!template) return null;
+
+      set((state) => ({
+        templateDetails: {
+          ...state.templateDetails,
+          [templateId]: template,
+        },
+        templates: mergeTemplateSummary(state.templates, toTemplateSummary(template)),
+      }));
+
+      return template;
+    } catch {
+      const localTemplate = loadLegacyTemplates().find((item) => item.id === templateId) ?? null;
+      if (!localTemplate) return null;
+
+      set((state) => ({
+        templateDetails: {
+          ...state.templateDetails,
+          [templateId]: localTemplate,
+        },
+        templates: mergeTemplateSummary(state.templates, toTemplateSummary(localTemplate)),
+      }));
+
+      return localTemplate;
+    }
+  },
 
   addMaterial: (type) => {
     get().insertMaterial(type, null, get().schema.nodes.length);
   },
 
-  // 物料既可以插入页面根节点，也可以插入某个容器内部。
   insertMaterial: (type, parentId = null, index) => {
     const material = materialRegistry.find((item) => item.type === type);
     if (!material) return;
@@ -213,13 +332,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     );
   },
 
-  // 拖拽已有节点的本质是树结构迁移，而不是单纯的 DOM 排序。
   moveNodeByDrop: (sourceId, parentId = null, index) => {
     set((state) =>
-      applySchemaChange(state, {
-        ...state.schema,
-        nodes: moveNodeTo(state.schema.nodes, sourceId, parentId, index),
-      }, { selectedId: sourceId }),
+      applySchemaChange(
+        state,
+        {
+          ...state.schema,
+          nodes: moveNodeTo(state.schema.nodes, sourceId, parentId, index),
+        },
+        { selectedId: sourceId },
+      ),
     );
   },
 
@@ -291,7 +413,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => {
       const target = findNode(state.schema.nodes, selectedId);
       if (!target) return {};
-      // 复制节点时会重新生成整棵子树的 id，避免副本和原节点冲突。
       return applySchemaChange(
         state,
         {
@@ -343,7 +464,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { history, schema, future } = get();
     if (!history.length) return;
 
-    // 当前快照退回 history，当前页面进入 future，形成标准 undo/redo 双栈。
     const previous = cloneSchema(history[history.length - 1]);
     const nextHistory = history.slice(0, -1);
     const nextFuture = [cloneSchema(schema), ...future].slice(0, 50);
@@ -361,7 +481,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { history, schema, future } = get();
     if (!future.length) return;
 
-    // redo 和 undo 相反：从 future 取回一份页面，同时把当前页面推回 history。
     const next = cloneSchema(future[0]);
     const nextFuture = future.slice(1);
     const nextHistory = [...history, cloneSchema(schema)].slice(-50);
@@ -380,7 +499,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       mode: state.mode === 'edit' ? 'preview' : 'edit',
     })),
 
-  // 导入前先做归一化，避免非法数据或历史版本直接把编辑器搞坏。
   importSchema: (text) => {
     try {
       const parsed = JSON.parse(text) as unknown;
@@ -419,89 +537,159 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       submissions: [payload, ...state.submissions].slice(0, 10),
     })),
 
-  // 保存模板时，会把当前页面 Schema 沉淀成一份可复用模板记录。
-  saveAsTemplate: (name) => {
+  saveAsTemplate: async (name) => {
     const current = normalizeSchema(get().schema, { fallbackTitle: '未命名模板' });
     if (!current.ok) return;
-      const activeTemplate = get().templates.find((item) => item.id === get().activeTemplateId) ?? null;
-      const source = activeTemplate?.source ?? 'manual';
-      const template: SavedTemplate = {
-        id: createId('tpl'),
-        name: name?.trim() || `${current.schema.pageMeta.title} 妯℃澘`,
-        draftSchema: cloneSchema(current.schema),
-        publishedSchema: null,
-        updatedAt: new Date().toISOString(),
-        publishedAt: null,
-        source,
-      };
-    const templates = updateTemplatesList((prev) => [template, ...prev]);
-    set({ templates, activeTemplateId: template.id });
+
+    const activeTemplate = get().templates.find((item) => item.id === get().activeTemplateId) ?? null;
+    const now = new Date().toISOString();
+    const template: SavedTemplate = {
+      id: createId('tpl'),
+      name: name?.trim() || `${current.schema.pageMeta.title} 模板`,
+      draftSchema: cloneSchema(current.schema),
+      publishedSchema: null,
+      updatedAt: now,
+      publishedAt: null,
+      source: activeTemplate?.source ?? 'manual',
+    };
+
+    try {
+      const saved = await createTemplateRecord(template);
+      if (!saved) return;
+      set((state) => ({
+        templates: mergeTemplateSummary(state.templates, toTemplateSummary(saved)),
+        activeTemplateId: saved.id,
+        templateDetails: {
+          ...state.templateDetails,
+          [saved.id]: saved,
+        },
+      }));
+    } catch {
+      const templates = updateLegacyTemplatesList((prev) => [template, ...prev]);
+      set({
+        templates: sortTemplateSummaries(templates.map((item) => toTemplateSummary(item))),
+        activeTemplateId: template.id,
+        templateDetails: buildDetailsMap(templates),
+      });
+    }
   },
 
-  createTemplateFromSchema: (schema, name, options) => {
-      const normalized = normalizeSchema(schema, { fallbackTitle: 'AI 模板' });
+  createTemplateFromSchema: async (schema, name, options) => {
+    const normalized = normalizeSchema(schema, { fallbackTitle: 'AI 模板' });
     if (!normalized.ok) return '';
-      const now = new Date().toISOString();
-      const shouldPublish = Boolean(options?.publish);
-      const source = options?.source ?? 'ai';
-      // AI 结果和导入结果都会先落成模板，再进入草稿/发布流转，这样来源信息不会丢。
-      const template: SavedTemplate = {
-        id: createId('tpl'),
-        name: name?.trim() || `${normalized.schema.pageMeta.title} AI 妯℃澘`,
-        draftSchema: cloneSchema(normalized.schema),
-        publishedSchema: shouldPublish ? cloneSchema(normalized.schema) : null,
-        updatedAt: now,
-        publishedAt: shouldPublish ? now : null,
-        source,
-      };
-    const templates = updateTemplatesList((prev) => [template, ...prev]);
-    set({ templates, activeTemplateId: template.id });
-    return template.id;
+
+    const now = new Date().toISOString();
+    const shouldPublish = Boolean(options?.publish);
+    const template: SavedTemplate = {
+      id: createId('tpl'),
+      name: name?.trim() || `${normalized.schema.pageMeta.title} AI 模板`,
+      draftSchema: cloneSchema(normalized.schema),
+      publishedSchema: shouldPublish ? cloneSchema(normalized.schema) : null,
+      updatedAt: now,
+      publishedAt: shouldPublish ? now : null,
+      source: options?.source ?? 'ai',
+    };
+
+    try {
+      const saved = await createTemplateRecord(template);
+      if (!saved) return '';
+      set((state) => ({
+        templates: mergeTemplateSummary(state.templates, toTemplateSummary(saved)),
+        activeTemplateId: saved.id,
+        templateDetails: {
+          ...state.templateDetails,
+          [saved.id]: saved,
+        },
+      }));
+      return saved.id;
+    } catch {
+      const templates = updateLegacyTemplatesList((prev) => [template, ...prev]);
+      set({
+        templates: sortTemplateSummaries(templates.map((item) => toTemplateSummary(item))),
+        activeTemplateId: template.id,
+        templateDetails: buildDetailsMap(templates),
+      });
+      return template.id;
+    }
   },
 
-  updateTemplateDraft: (templateId) => {
-      const normalized = normalizeSchema(get().schema, { fallbackTitle: '草稿模板' });
+  updateTemplateDraft: async (templateId) => {
+    const normalized = normalizeSchema(get().schema, { fallbackTitle: '草稿模板' });
     if (!normalized.ok) return;
     const current = cloneSchema(normalized.schema);
-    // 草稿更新只覆盖 draftSchema，不会动已经对外可见的 publishedSchema。
-    const templates = updateTemplatesList((prev) =>
-      prev.map((item) =>
-        item.id === templateId
-          ? {
-              ...item,
-              draftSchema: current,
-              updatedAt: new Date().toISOString(),
-              source: item.source ?? 'manual',
-            }
-          : item,
-      ),
-    );
-    set({ templates, activeTemplateId: templateId });
+
+    try {
+      const updated = await updateTemplateDraftRecord(templateId, current);
+      if (!updated) return;
+      set((state) => ({
+        templates: mergeTemplateSummary(state.templates, toTemplateSummary(updated)),
+        activeTemplateId: templateId,
+        templateDetails: {
+          ...state.templateDetails,
+          [templateId]: updated,
+        },
+      }));
+    } catch {
+      const templates = updateLegacyTemplatesList((prev) =>
+        prev.map((item) =>
+          item.id === templateId
+            ? {
+                ...item,
+                draftSchema: current,
+                updatedAt: new Date().toISOString(),
+                source: item.source ?? 'manual',
+              }
+            : item,
+        ),
+      );
+      set({
+        templates: sortTemplateSummaries(templates.map((item) => toTemplateSummary(item))),
+        activeTemplateId: templateId,
+        templateDetails: buildDetailsMap(templates),
+      });
+    }
   },
 
-  // 发布时会把当前工作中的 Schema 同步成对外可用的发布快照。
-  publishTemplate: (templateId) => {
-      const normalized = normalizeSchema(get().schema, { fallbackTitle: '发布模板' });
+  publishTemplate: async (templateId) => {
+    const normalized = normalizeSchema(get().schema, { fallbackTitle: '发布模板' });
     if (!normalized.ok) return;
     const current = cloneSchema(normalized.schema);
-    const templates = updateTemplatesList((prev) =>
-      prev.map((item) =>
-        item.id === templateId
-          ? {
-              ...item,
-              draftSchema: current,
-              publishedSchema: cloneSchema(current),
-              updatedAt: new Date().toISOString(),
-              publishedAt: new Date().toISOString(),
-              source: item.source ?? 'manual',
-            }
-          : item,
-      ),
-    );
-    set({ templates, activeTemplateId: templateId });
+
+    try {
+      const updated = await publishTemplateRecord(templateId, current);
+      if (!updated) return;
+      set((state) => ({
+        templates: mergeTemplateSummary(state.templates, toTemplateSummary(updated)),
+        activeTemplateId: templateId,
+        templateDetails: {
+          ...state.templateDetails,
+          [templateId]: updated,
+        },
+      }));
+    } catch {
+      const templates = updateLegacyTemplatesList((prev) =>
+        prev.map((item) =>
+          item.id === templateId
+            ? {
+                ...item,
+                draftSchema: current,
+                publishedSchema: cloneSchema(current),
+                updatedAt: new Date().toISOString(),
+                publishedAt: new Date().toISOString(),
+                source: item.source ?? 'manual',
+              }
+            : item,
+        ),
+      );
+      set({
+        templates: sortTemplateSummaries(templates.map((item) => toTemplateSummary(item))),
+        activeTemplateId: templateId,
+        templateDetails: buildDetailsMap(templates),
+      });
+    }
   },
 
-  importTemplateFile: (text) => {
+  importTemplateFile: async (text) => {
     try {
       const parsed = parseImportedJson(text);
       const currentTemplates = get().templates;
@@ -513,17 +701,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         (parsed as { type?: unknown }).type === TEMPLATE_FILE_TYPE &&
         'template' in parsed
       ) {
-        // 文件导入不是直接相信外部 JSON，而是先归一化模板记录再进入模板中心。
         const normalizedTemplate = normalizeTemplateRecord((parsed as { template?: unknown }).template);
         if (!normalizedTemplate) {
           return { ok: false, message: '模板文件结构不合法，无法导入。' };
         }
 
-        const nextName = buildImportedTemplateName(normalizedTemplate.name, currentTemplates);
         const nextTemplate: SavedTemplate = {
           ...normalizedTemplate,
           id: createId('tpl'),
-          name: nextName,
+          name: buildImportedTemplateName(normalizedTemplate.name, currentTemplates),
           updatedAt: new Date().toISOString(),
           publishedAt: normalizedTemplate.publishedSchema
             ? normalizedTemplate.publishedAt ?? new Date().toISOString()
@@ -531,32 +717,51 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           source: 'imported',
         };
 
-        const templates = updateTemplatesList((prev) => [nextTemplate, ...prev]);
-        set({ templates, activeTemplateId: nextTemplate.id });
+        try {
+          const saved = await createTemplateRecord(nextTemplate);
+          if (!saved) {
+            return { ok: false, message: '模板文件导入失败。' };
+          }
 
-        return {
-          ok: true,
-          message:
-            nextName === normalizedTemplate.name
-              ? '模板文件导入成功。'
-              : `模板文件导入成功，名称已调整为“${nextName}”。`,
-          templateId: nextTemplate.id,
-        };
+          set((state) => ({
+            templates: mergeTemplateSummary(state.templates, toTemplateSummary(saved)),
+            activeTemplateId: saved.id,
+            templateDetails: {
+              ...state.templateDetails,
+              [saved.id]: saved,
+            },
+          }));
+
+          return {
+            ok: true,
+            message: '模板文件导入成功。',
+            templateId: saved.id,
+            template: saved,
+          };
+        } catch {
+          const templates = updateLegacyTemplatesList((prev) => [nextTemplate, ...prev]);
+          set({
+            templates: sortTemplateSummaries(templates.map((item) => toTemplateSummary(item))),
+            activeTemplateId: nextTemplate.id,
+            templateDetails: buildDetailsMap(templates),
+          });
+          return {
+            ok: true,
+            message: '模板文件导入成功。',
+            templateId: nextTemplate.id,
+            template: nextTemplate,
+          };
+        }
       }
 
-      const normalizedSchema = normalizeSchema(parsed, { fallbackTitle: '瀵煎叆妯℃澘' });
+      const normalizedSchema = normalizeSchema(parsed, { fallbackTitle: '导入模板' });
       if (!normalizedSchema.ok) {
         return { ok: false, message: getSchemaImportMessage(normalizedSchema) };
       }
 
-      // 纯 Schema 导入时，会被包成一份新的 imported 草稿模板，方便继续在模板中心流转。
-      const nextName = buildImportedTemplateName(
-        `${normalizedSchema.schema.pageMeta.title} 妯℃澘`,
-        currentTemplates,
-      );
       const nextTemplate: SavedTemplate = {
         id: createId('tpl'),
-        name: nextName,
+        name: buildImportedTemplateName(`${normalizedSchema.schema.pageMeta.title} 模板`, currentTemplates),
         draftSchema: cloneSchema(normalizedSchema.schema),
         publishedSchema: null,
         updatedAt: new Date().toISOString(),
@@ -564,26 +769,52 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         source: 'imported',
       };
 
-      const templates = updateTemplatesList((prev) => [nextTemplate, ...prev]);
-      set({ templates, activeTemplateId: nextTemplate.id });
+      try {
+        const saved = await createTemplateRecord(nextTemplate);
+        if (!saved) {
+          return { ok: false, message: 'Schema 文件导入失败。' };
+        }
 
-      return {
-        ok: true,
-        message: 'Schema 文件导入成功，已创建为草稿模板。',
-        templateId: nextTemplate.id,
-      };
+        set((state) => ({
+          templates: mergeTemplateSummary(state.templates, toTemplateSummary(saved)),
+          activeTemplateId: saved.id,
+          templateDetails: {
+            ...state.templateDetails,
+            [saved.id]: saved,
+          },
+        }));
+
+        return {
+          ok: true,
+          message: 'Schema 文件导入成功，已创建为草稿模板。',
+          templateId: saved.id,
+          template: saved,
+        };
+      } catch {
+        const templates = updateLegacyTemplatesList((prev) => [nextTemplate, ...prev]);
+        set({
+          templates: sortTemplateSummaries(templates.map((item) => toTemplateSummary(item))),
+          activeTemplateId: nextTemplate.id,
+          templateDetails: buildDetailsMap(templates),
+        });
+        return {
+          ok: true,
+          message: 'Schema 文件导入成功，已创建为草稿模板。',
+          templateId: nextTemplate.id,
+          template: nextTemplate,
+        };
+      }
     } catch {
       return { ok: false, message: '文件解析失败，请确认上传的是合法 JSON 文件。' };
     }
   },
 
-  exportTemplateFile: (templateId) => {
-    const template = get().templates.find((item) => item.id === templateId);
+  exportTemplateFile: async (templateId) => {
+    const template = await get().getTemplateDetail(templateId);
     if (!template) {
       return { ok: false, message: '未找到要导出的模板。' };
     }
 
-    // 导出时同时提供模板 JSON 和静态 HTML，两者分别服务继续编辑和对外交付场景。
     return {
       ok: true,
       message: '模板 JSON 与页面 HTML 已生成。',
@@ -598,8 +829,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     };
   },
 
-  loadTemplateDraft: (templateId) => {
-    const template = get().templates.find((item) => item.id === templateId);
+  loadTemplateDraft: async (templateId) => {
+    const template = await get().getTemplateDetail(templateId);
     if (!template) return;
     const normalized = normalizeSchema(template.draftSchema, { fallbackTitle: template.name });
     if (!normalized.ok) return;
@@ -611,10 +842,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     );
   },
 
-  loadTemplatePublished: (templateId) => {
-    const template = get().templates.find((item) => item.id === templateId);
+  loadTemplatePublished: async (templateId) => {
+    const template = await get().getTemplateDetail(templateId);
     if (!template?.publishedSchema) return;
-    const normalized = normalizeSchema(template.publishedSchema as PageSchema, { fallbackTitle: template.name });
+    const normalized = normalizeSchema(template.publishedSchema, { fallbackTitle: template.name });
     if (!normalized.ok) return;
     set((state) =>
       applySchemaChange(state, cloneSchema(normalized.schema), {
@@ -624,21 +855,62 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     );
   },
 
-  renameTemplate: (templateId, name) => {
+  renameTemplate: async (templateId, name) => {
     const nextName = name.trim();
     if (!nextName) return;
-    const templates = updateTemplatesList((prev) =>
-      prev.map((item) => (item.id === templateId ? { ...item, name: nextName, updatedAt: new Date().toISOString() } : item)),
-    );
-    set({ templates });
+
+    try {
+      const updatedSummary = await renameTemplateRecord(templateId, nextName);
+      if (!updatedSummary) return;
+      set((state) => ({
+        templates: mergeTemplateSummary(state.templates, updatedSummary),
+        templateDetails: state.templateDetails[templateId]
+          ? {
+              ...state.templateDetails,
+              [templateId]: {
+                ...state.templateDetails[templateId],
+                name: nextName,
+                updatedAt: updatedSummary.updatedAt,
+              },
+            }
+          : state.templateDetails,
+      }));
+    } catch {
+      const templates = updateLegacyTemplatesList((prev) =>
+        prev.map((item) =>
+          item.id === templateId ? { ...item, name: nextName, updatedAt: new Date().toISOString() } : item,
+        ),
+      );
+      set({
+        templates: sortTemplateSummaries(templates.map((item) => toTemplateSummary(item))),
+        templateDetails: buildDetailsMap(templates),
+      });
+    }
   },
 
-  deleteTemplate: (templateId) => {
-    const templates = updateTemplatesList((prev) => prev.filter((item) => item.id !== templateId));
-    set((state) => ({
-      templates,
-      activeTemplateId: state.activeTemplateId === templateId ? templates[0]?.id ?? null : state.activeTemplateId,
-    }));
+  deleteTemplate: async (templateId) => {
+    try {
+      await deleteTemplateRecord(templateId);
+      set((state) => {
+        const nextTemplates = state.templates.filter((item) => item.id !== templateId);
+        const nextDetails = { ...state.templateDetails };
+        delete nextDetails[templateId];
+        return {
+          templates: nextTemplates,
+          templateDetails: nextDetails,
+          activeTemplateId:
+            state.activeTemplateId === templateId ? nextTemplates[0]?.id ?? null : state.activeTemplateId,
+        };
+      });
+    } catch {
+      const templates = updateLegacyTemplatesList((prev) => prev.filter((item) => item.id !== templateId));
+      set((state) => ({
+        templates: sortTemplateSummaries(templates.map((item) => toTemplateSummary(item))),
+        templateDetails: buildDetailsMap(templates),
+        activeTemplateId:
+          state.activeTemplateId === templateId ? templates[0]?.id ?? null : state.activeTemplateId,
+      }));
+    }
   },
 }));
 
@@ -646,7 +918,5 @@ export function useSelectedNode(): PageNode | null {
   const schema = useEditorStore((state) => state.schema);
   const selectedId = useEditorStore((state) => state.selectedId);
   if (!selectedId) return null;
-  // 这个 hook 专门把“当前选中节点”这段派生逻辑抽出来，组件层不用重复查树。
   return findNode(schema.nodes, selectedId);
 }
-

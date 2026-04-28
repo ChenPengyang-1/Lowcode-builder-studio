@@ -41,7 +41,15 @@ function buildLinePath(values: number[], xPositions: number[], height: number, m
 }
 
 export function DashboardPage({ onNavigate }: DashboardPageProps) {
-  const templates = useEditorStore((state) => state.templates);
+  const templates = useEditorStore((state) => state.templates as Array<{
+    id: string;
+    name: string;
+    updatedAt: string;
+    publishedAt?: string | null;
+    hasPublished: boolean;
+    draftNodeCount: number;
+    publishedSchema?: unknown;
+  }>);
   const schema = useEditorStore((state) => state.schema);
   const submissions = useEditorStore((state) => state.submissions);
   const [hoveredTrendIndex, setHoveredTrendIndex] = useState<number | null>(null);
@@ -49,7 +57,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [measuredChartWidth, setMeasuredChartWidth] = useState(320);
 
   const publishedTemplates = useMemo(
-    () => templates.filter((item) => item.publishedSchema),
+    () => templates.filter((item) => item.hasPublished),
     [templates],
   );
 
@@ -110,7 +118,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
     const averageNodesPerTemplate = templates.length
       ? Math.round(
-          templates.reduce((sum, template) => sum + flattenNodes(template.draftSchema.nodes).length, 0) /
+          templates.reduce((sum, template) => sum + template.draftNodeCount, 0) /
             templates.length,
         )
       : 0;

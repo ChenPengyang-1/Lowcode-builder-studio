@@ -8,6 +8,7 @@ import {
   streamRefineTemplateWithAI,
 } from './services/openai-template-service.mjs';
 import { chatTemplateWithAI, streamChatTemplateWithAI } from './services/openai-template-chat-service.mjs';
+import { templateRepository } from './services/template-repository.mjs';
 
 const app = express();
 const port = Number(process.env.AI_SERVER_PORT || 8787);
@@ -16,6 +17,7 @@ app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
 function initSse(res) {
+  // SSE 仍然基于 HTTP，只是把响应头切成持续推送事件流。
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -66,6 +68,127 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+app.get('/api/templates', (_req, res) => {
+  res.json({
+    ok: true,
+    templates: templateRepository.listSummaries(),
+  });
+});
+
+app.get('/api/templates/:id', (req, res) => {
+  const template = templateRepository.getTemplate(req.params.id);
+  if (!template) {
+    return res.status(404).json({ ok: false, message: '未找到该模板。' });
+  }
+
+  return res.json({
+    ok: true,
+    template,
+  });
+});
+
+app.post('/api/templates/bootstrap', (req, res) => {
+  const { templates } = req.body ?? {};
+  if (!Array.isArray(templates)) {
+    return res.status(400).json({ ok: false, message: 'templates 必须是数组。' });
+  }
+
+  return res.json({
+    ok: true,
+    templates: templateRepository.bootstrapTemplates(templates),
+  });
+});
+
+app.post('/api/templates', (req, res) => {
+  const { id, name, draftSchema, publishedSchema = null, source, updatedAt, publishedAt = null, thumbnailUrl = null } = req.body ?? {};
+
+  if (!id || typeof id !== 'string') {
+    return res.status(400).json({ ok: false, message: '模板 id 不能为空。' });
+  }
+  if (!name || typeof name !== 'string') {
+    return res.status(400).json({ ok: false, message: '模板名称不能为空。' });
+  }
+  if (!draftSchema || typeof draftSchema !== 'object') {
+    return res.status(400).json({ ok: false, message: 'draftSchema 不能为空。' });
+  }
+
+  const template = templateRepository.createTemplate({
+    id,
+    name,
+    draftSchema,
+    publishedSchema,
+    source,
+    updatedAt: typeof updatedAt === 'string' ? updatedAt : new Date().toISOString(),
+    publishedAt: typeof publishedAt === 'string' ? publishedAt : publishedAt,
+    thumbnailUrl: typeof thumbnailUrl === 'string' ? thumbnailUrl : null,
+  });
+
+  return res.status(201).json({
+    ok: true,
+    template,
+  });
+});
+
+app.put('/api/templates/:id/draft', (req, res) => {
+  const { schema } = req.body ?? {};
+  if (!schema || typeof schema !== 'object') {
+    return res.status(400).json({ ok: false, message: 'schema 不能为空。' });
+  }
+
+  const template = templateRepository.updateDraft(req.params.id, schema);
+  if (!template) {
+    return res.status(404).json({ ok: false, message: '未找到要更新的模板。' });
+  }
+
+  return res.json({
+    ok: true,
+    template,
+  });
+});
+
+app.post('/api/templates/:id/publish', (req, res) => {
+  const { schema } = req.body ?? {};
+  if (!schema || typeof schema !== 'object') {
+    return res.status(400).json({ ok: false, message: 'schema 不能为空。' });
+  }
+
+  const template = templateRepository.publishTemplate(req.params.id, schema);
+  if (!template) {
+    return res.status(404).json({ ok: false, message: '未找到要发布的模板。' });
+  }
+
+  return res.json({
+    ok: true,
+    template,
+  });
+});
+
+app.patch('/api/templates/:id/name', (req, res) => {
+  const { name } = req.body ?? {};
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ ok: false, message: '模板名称不能为空。' });
+  }
+
+  const template = templateRepository.renameTemplate(req.params.id, name.trim());
+  if (!template) {
+    return res.status(404).json({ ok: false, message: '未找到要重命名的模板。' });
+  }
+
+  return res.json({
+    ok: true,
+    template,
+  });
+});
+
+app.delete('/api/templates/:id', (req, res) => {
+  const deleted = templateRepository.deleteTemplate(req.params.id);
+  if (!deleted) {
+    return res.status(404).json({ ok: false, message: '未找到要删除的模板。' });
+  }
+
+  return res.json({ ok: true });
+});
+
 app.post('/api/ai/template/generate', async (req, res, next) => {
   const { prompt, previousResponseId } = req.body ?? {};
   if (!prompt || typeof prompt !== 'string') {
@@ -79,6 +202,7 @@ app.post('/api/ai/template/generate', async (req, res, next) => {
       clientClosed = true;
     });
     try {
+      // 前端一旦 abort，这里的 close 会触发，后续就不再继续往流里写数据。
       if (clientClosed) return res.end();
       writeSse(res, 'status', { text: '已连接生成服务，正在准备页面蓝图...' });
       const result = await streamGenerateTemplateWithAI({
@@ -121,6 +245,7 @@ app.post('/api/ai/template/chat', async (req, res, next) => {
     try {
       if (clientClosed) return res.end();
       writeSse(res, 'status', { text: 'AI 已连接，正在生成回复...' });
+      // chat 链路会一边返回文本增量，一边在最后回传 intent 和 actionPrompt。
       const result = await streamChatTemplateWithAI({
         message,
         previousResponseId,
@@ -165,6 +290,7 @@ app.post('/api/ai/template/refine', async (req, res, next) => {
     });
     try {
       if (clientClosed) return res.end();
+      // refine 的状态流更偏“阶段提示”，最终完整结构还是通过 result 事件一次性返回。
       writeSse(res, 'status', { text: '已连接修改服务，正在理解当前页面...' });
       const result = await streamRefineTemplateWithAI({
         prompt,

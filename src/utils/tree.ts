@@ -46,6 +46,7 @@ export function flattenNodes(nodes: PageNode[], depth = 0): Array<PageNode & { d
   ]);
 }
 
+// 图层面板这类线性 UI 会使用拍平后的节点列表，而真正的编辑仍然基于树结构进行。
 export function moveNodeIndex(nodes: PageNode[], id: string, direction: 'up' | 'down'): PageNode[] {
   const index = nodes.findIndex((node) => node.id === id);
   if (index !== -1) {
@@ -71,6 +72,7 @@ export function insertNode(
   parentId: string | null = null,
   index?: number,
 ): PageNode[] {
+  // parentId 为空时，表示把节点直接插入页面根层级。
   if (!parentId) {
     const next = [...nodes];
     const insertionIndex = typeof index === 'number' ? Math.max(0, Math.min(index, next.length)) : next.length;
@@ -80,6 +82,7 @@ export function insertNode(
 
   return nodes.map((node) => {
     if (node.id === parentId) {
+      // 只替换命中的这一支 children，避免整棵树无意义重建。
       const children = [...(node.children ?? [])];
       const insertionIndex = typeof index === 'number' ? Math.max(0, Math.min(index, children.length)) : children.length;
       children.splice(insertionIndex, 0, newNode);
@@ -167,6 +170,7 @@ export function moveNodeTo(
 ): PageNode[] {
   if (isDescendantOrSelf(nodes, sourceId, targetParentId)) return nodes;
 
+  // 跨层级拖拽的本质是先把节点从旧位置摘下来，再插回目标位置。
   const extracted = removeNodeWithMeta(nodes, sourceId);
   if (!extracted.removed) return nodes;
 

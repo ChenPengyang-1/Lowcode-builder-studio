@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
+import { useEditorStore } from './store/editorStore';
 import {
   clearAuthSession,
   getStoredAuthSession,
@@ -77,6 +78,7 @@ function ProtectedApp({
   const location = useLocation();
   const navigate = useNavigate();
   const route = getRouteFromPath(location.pathname) as AppRoute;
+  const hydrateTemplates = useEditorStore((state) => state.hydrateTemplates);
 
   const handleToggleTheme = () => {
     onThemeChange(themeMode === 'dark' ? 'light' : 'dark');
@@ -85,6 +87,10 @@ function ProtectedApp({
   const handleNavigate = (nextRoute: AppRoute) => {
     navigate(`/${nextRoute}`);
   };
+
+  useEffect(() => {
+    void hydrateTemplates();
+  }, [hydrateTemplates]);
 
   const content = useMemo(() => {
     if (route === 'dashboard') {

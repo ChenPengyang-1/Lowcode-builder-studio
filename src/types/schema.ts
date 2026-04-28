@@ -58,3 +58,15 @@ export interface SavedTemplate {
   publishedAt?: string | null;
   source?: 'manual' | 'ai' | 'imported';
 }
+
+export interface TemplateSummary {
+  id: string;
+  name: string;
+  updatedAt: string;
+  publishedAt?: string | null;
+  source?: 'manual' | 'ai' | 'imported';
+  hasPublished: boolean;
+  draftNodeCount: number;
+  publishedNodeCount: number;
+  thumbnailUrl?: string | null;
+}

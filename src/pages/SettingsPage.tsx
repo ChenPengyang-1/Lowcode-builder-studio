@@ -12,7 +12,7 @@ interface SettingsPageProps {
 export function SettingsPage({ currentUser, themeMode, onThemeChange }: SettingsPageProps) {
   const templates = useEditorStore((state) => state.templates);
   const submissions = useEditorStore((state) => state.submissions);
-  const publishedCount = templates.filter((item) => item.publishedSchema).length;
+  const publishedCount = templates.filter((item) => item.hasPublished).length;
 
   return (
     <div className="settings-page">
@@ -28,7 +28,7 @@ export function SettingsPage({ currentUser, themeMode, onThemeChange }: Settings
             onClick={() => onThemeChange('dark')}
           >
             <strong>深色模式</strong>
-            <span>更适合当前这套后台壳和编辑器的视觉风格。</span>
+            <span>更适合当前后台和编辑器的视觉风格。</span>
           </button>
           <button
             type="button"
@@ -36,7 +36,7 @@ export function SettingsPage({ currentUser, themeMode, onThemeChange }: Settings
             onClick={() => onThemeChange('light')}
           >
             <strong>浅色模式</strong>
-            <span>适合展示页面层级和卡片结构，整体更亮一些。</span>
+            <span>更适合突出页面层级和卡片结构，整体会更明亮一些。</span>
           </button>
         </div>
       </section>
@@ -82,7 +82,7 @@ export function SettingsPage({ currentUser, themeMode, onThemeChange }: Settings
           </div>
           <div>
             <strong>模板存储</strong>
-            <span>浏览器 localStorage</span>
+            <span>SQLite + 本地运行时缓存</span>
           </div>
           <div>
             <strong>项目定位</strong>

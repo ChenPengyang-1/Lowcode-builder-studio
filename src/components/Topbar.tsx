@@ -24,9 +24,9 @@ export function Topbar() {
 
   const activeTemplate = templates.find((item) => item.id === activeTemplateId) ?? null;
 
-  const handlePublish = () => {
+  const handlePublish = async () => {
     if (!activeTemplate) return;
-    publishTemplate(activeTemplate.id);
+    await publishTemplate(activeTemplate.id);
     navigate('/published');
   };
 
@@ -62,12 +62,12 @@ export function Topbar() {
               <button onClick={() => setJsonText(exportSchema())}>导出 Schema</button>
               <button onClick={toggleMode}>{mode === 'edit' ? '切换预览' : '返回编辑'}</button>
               <button onClick={() => navigate('/published')}>模板发布页</button>
-              {activeTemplate ? <button onClick={() => updateTemplateDraft(activeTemplate.id)}>保存草稿</button> : null}
+              {activeTemplate ? <button onClick={() => void updateTemplateDraft(activeTemplate.id)}>保存草稿</button> : null}
               {activeTemplate ? <button onClick={handlePublish}>发布当前页</button> : null}
             </div>
             <div className="toolbar-status-line">
               {activeTemplate
-                ? `当前模板：${activeTemplate.name} · ${activeTemplate.publishedSchema ? '已有已发布版本' : '暂未发布'}`
+                ? `当前模板：${activeTemplate.name} · ${activeTemplate.hasPublished ? '已有已发布版本' : '暂未发布'}`
                 : '当前页面还没有保存为模板，可以在左侧模板中心创建。'}
             </div>
           </div>

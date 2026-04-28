@@ -37,6 +37,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+// style 只保留可序列化的字符串值，避免导入脏数据直接污染渲染层。
+
 // 样式层只保留可序列化的字符串值，避免导入后出现不可控结构。
 function normalizeStyle(value: unknown) {
   if (!isObject(value)) {
@@ -50,6 +52,8 @@ function normalizeStyle(value: unknown) {
     return acc;
   }, {});
 }
+
+// props 只接收当前 Schema 协议支持的基础值类型，复杂对象会在这里被挡掉。
 
 // 属性层只接收当前 Schema 协议支持的值类型。
 function normalizeProps(value: unknown) {
@@ -76,6 +80,8 @@ function normalizeProps(value: unknown) {
   }, {});
 }
 
+// actions 会被收敛到当前渲染器真正支持的交互集合里。
+
 // 行为配置会被收敛到当前渲染器真正支持的几种交互。
 function normalizeActions(value: unknown): PageNode['actions'] {
   if (!Array.isArray(value)) {
@@ -101,6 +107,8 @@ function normalizeActions(value: unknown): PageNode['actions'] {
 
   return actions.length ? actions : [{ type: 'none' }];
 }
+
+// 表单字段比普通节点更容易出现缺字段或脏数据，所以会单独做一轮归一化。
 
 // 表单字段会在这里补齐默认值，保证旧模板和 AI 结果也能继续复用。
 function normalizeFormField(rawField: unknown, issues: string[]): FormField | null {
@@ -129,6 +137,8 @@ function normalizeFormField(rawField: unknown, issues: string[]): FormField | nu
         : undefined,
   };
 }
+
+// 这里会把外部传进来的节点整理成当前平台认得的标准节点结构。
 
 // 节点归一化是 Schema 治理的核心入口，外部数据进编辑器前都要过这一层。
 function normalizeNode(rawNode: unknown, issues: string[]): PageNode | null {
@@ -203,6 +213,7 @@ function migrateLegacySchema(rawSchema: Record<string, unknown>, issues: string[
   return schema;
 }
 
+// 所有外部进入系统的页面数据，都会先走这里的校验、补全和版本兼容。
 export function normalizeSchema(rawSchema: unknown, options: SchemaNormalizationOptions = {}): NormalizeSchemaResult {
   const issues: string[] = [];
 
@@ -214,6 +225,7 @@ export function normalizeSchema(rawSchema: unknown, options: SchemaNormalization
     };
   }
 
+  // 先迁移旧结构，再归一化当前版本字段，避免旧模板直接失效。
   const migrated = migrateLegacySchema(rawSchema, issues);
   const rawPageMeta = isObject(migrated.pageMeta) ? migrated.pageMeta : {};
   const nodes = Array.isArray(migrated.nodes)
@@ -255,6 +267,7 @@ export function normalizeSchema(rawSchema: unknown, options: SchemaNormalization
   };
 }
 
+// 模板记录归一化是在 Schema 归一化外面再包一层模板资产治理。
 export function normalizeTemplateRecord(rawTemplate: unknown): SavedTemplate | null {
   if (!isObject(rawTemplate)) {
     return null;

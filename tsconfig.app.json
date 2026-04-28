@@ -14,7 +14,6 @@
     "strict": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "baseUrl": "."
   },
   "include": ["src"]
 }
