@@ -31,22 +31,95 @@ function useNodeDraggable(nodeId: string, mode: 'edit' | 'preview') {
 }
 
 function runActions(node: PageNode) {
-  const first = node.actions?.[0];
-  if (!first || first.type === 'none') return;
+  const action = node.actions?.[0];
+  if (!action || action.type === 'none') return;
 
-  if (first.type === 'alert') {
-    window.alert(first.payload || '未配置提示内容');
+  if (action.type === 'alert') {
+    window.alert(action.payload || '还没有配置提示内容');
     return;
   }
 
-  if (first.type === 'navigate') {
-    if (!first.payload) {
-      window.alert('未配置跳转链接');
+  if (action.type === 'navigate') {
+    if (!action.payload) {
+      window.alert('还没有配置跳转链接');
       return;
     }
 
-    window.open(first.payload, '_blank', 'noopener,noreferrer');
+    window.open(action.payload, '_blank', 'noopener,noreferrer');
   }
+}
+
+function splitFeatureItems(value: unknown) {
+  return String(value ?? '')
+    .split('|')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function splitStatItems(value: unknown) {
+  return String(value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const [metric = '', label = ''] = item.split('|');
+      return {
+        value: metric.trim(),
+        label: label.trim(),
+      };
+    });
+}
+
+function renderFormField(
+  field: FormField,
+  value: string,
+  interactive: boolean,
+  error: string | undefined,
+  onChange: (nextValue: string) => void,
+) {
+  if (field.type === 'textarea') {
+    return (
+      <textarea
+        className="mock-input"
+        placeholder={field.placeholder || field.label}
+        rows={3}
+        readOnly={!interactive}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    );
+  }
+
+  if (field.type === 'select') {
+    return (
+      <select
+        className="mock-input"
+        disabled={!interactive}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        <option value="">{field.placeholder || `请选择${field.label}`}</option>
+        {(field.options ?? []).map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  const inputType = field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'text';
+
+  return (
+    <input
+      className="mock-input"
+      placeholder={field.placeholder || field.label}
+      readOnly={!interactive}
+      type={inputType}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
 }
 
 const FormRenderer = memo(function FormRenderer({
@@ -66,11 +139,11 @@ const FormRenderer = memo(function FormRenderer({
   const { dragAttributes, dragListeners, dragRef, isDragging } = useNodeDraggable(node.id, mode);
 
   const initialValues = useMemo(() => {
-    const result: Record<string, string> = {};
+    const nextValues: Record<string, string> = {};
     fields.forEach((field) => {
-      result[field.id] = '';
+      nextValues[field.id] = '';
     });
-    return result;
+    return nextValues;
   }, [fields]);
 
   const [values, setValues] = useState<Record<string, string>>(initialValues);
@@ -81,8 +154,8 @@ const FormRenderer = memo(function FormRenderer({
     setErrors({});
   }, [initialValues]);
 
-  const updateValue = (fieldId: string, value: string) => {
-    setValues((prev) => ({ ...prev, [fieldId]: value }));
+  const updateValue = (fieldId: string, nextValue: string) => {
+    setValues((prev) => ({ ...prev, [fieldId]: nextValue }));
   };
 
   const handleSubmit = (event: MouseEvent<HTMLButtonElement>) => {
@@ -94,17 +167,19 @@ const FormRenderer = memo(function FormRenderer({
     }
 
     const nextErrors: Record<string, string> = {};
+
     fields.forEach((field) => {
-      const value = values[field.id]?.trim() ?? '';
-      if (field.required && !value) {
+      const currentValue = values[field.id]?.trim() ?? '';
+
+      if (field.required && !currentValue) {
         nextErrors[field.id] = `${field.label}为必填项`;
       }
 
-      if (field.type === 'tel' && value && !/^1\d{10}$/.test(value)) {
+      if (field.type === 'tel' && currentValue && !/^1\d{10}$/.test(currentValue)) {
         nextErrors[field.id] = '手机号格式不正确';
       }
 
-      if (field.type === 'email' && value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      if (field.type === 'email' && currentValue && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(currentValue)) {
         nextErrors[field.id] = '邮箱格式不正确';
       }
     });
@@ -112,19 +187,18 @@ const FormRenderer = memo(function FormRenderer({
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
 
-    const payload = {
+    submitForm({
       formId: node.id,
       formTitle: String(node.props.title ?? '未命名表单'),
       submittedAt: new Date().toISOString(),
-      values: fields.reduce<Record<string, string>>((acc, field) => {
-        acc[field.label] = values[field.id] ?? '';
-        return acc;
+      values: fields.reduce<Record<string, string>>((result, field) => {
+        result[field.label] = values[field.id] ?? '';
+        return result;
       }, {}),
-    };
+    });
 
-    submitForm(payload);
     runActions(node);
-    window.alert('提交成功，结果已输出到右侧“最近提交结果”区域。');
+    window.alert('提交成功，结果已经写到右侧“最近提交结果”区域。');
   };
 
   return (
@@ -143,50 +217,21 @@ const FormRenderer = memo(function FormRenderer({
 
       <div className="form-grid">
         {fields.map((field, index) => (
-          <div key={field.id || `${field.label}-${index}`} className={`form-field-card ${field.type === 'textarea' ? 'full' : ''}`}>
+          <div
+            key={field.id || `${field.label}-${index}`}
+            className={`form-field-card ${field.type === 'textarea' ? 'full' : ''}`}
+          >
             <div className="form-field-label">
               {field.label}
               {field.required ? <span className="required-dot">*</span> : null}
             </div>
-
-            {field.type === 'textarea' ? (
-              <textarea
-                className="mock-input"
-                placeholder={field.placeholder || field.label}
-                rows={3}
-                readOnly={!interactive}
-                value={values[field.id] ?? ''}
-                onChange={(event) => updateValue(field.id, event.target.value)}
-              />
-            ) : null}
-
-            {field.type === 'select' ? (
-              <select
-                className="mock-input"
-                disabled={!interactive}
-                value={values[field.id] ?? ''}
-                onChange={(event) => updateValue(field.id, event.target.value)}
-              >
-                <option value="">{field.placeholder || `请选择${field.label}`}</option>
-                {(field.options ?? []).map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-
-            {(field.type === 'text' || field.type === 'tel' || field.type === 'email') ? (
-              <input
-                className="mock-input"
-                placeholder={field.placeholder || field.label}
-                readOnly={!interactive}
-                type={field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'text'}
-                value={values[field.id] ?? ''}
-                onChange={(event) => updateValue(field.id, event.target.value)}
-              />
-            ) : null}
-
+            {renderFormField(
+              field,
+              values[field.id] ?? '',
+              interactive,
+              errors[field.id],
+              (nextValue) => updateValue(field.id, nextValue),
+            )}
             {errors[field.id] ? <div className="field-error">{errors[field.id]}</div> : null}
           </div>
         ))}
@@ -217,7 +262,7 @@ const NodeFrame = memo(function NodeFrame({
   return (
     <div
       ref={dragRef}
-      className={`node-draggable-shell ${selectedId === node.id && mode === 'edit' ? 'selected-node' : ''} ${isDragging ? 'dragging-node' : ''}`.trim()}
+      className={`${selectedId === node.id && mode === 'edit' ? 'selected-node' : ''} ${isDragging ? 'dragging-node' : ''} node-draggable-shell`.trim()}
       onClick={(event) => {
         event.stopPropagation();
         if (mode === 'edit') onSelect?.(node.id);
@@ -230,6 +275,47 @@ const NodeFrame = memo(function NodeFrame({
     </div>
   );
 });
+
+function renderContainerChildren(
+  node: PageNode,
+  selectedId: string | null | undefined,
+  mode: 'edit' | 'preview',
+  onSelect?: (id: string) => void,
+) {
+  if (!node.children?.length) {
+    return (
+      <>
+        <div className="empty-slot">容器支持嵌套，你可以把左侧物料或现有节点直接拖到这里。</div>
+        {mode === 'edit' ? (
+          <DropSlot parentId={node.id} index={0} position="inside" label="拖到这里放进容器" className="child-drop-slot" />
+        ) : null}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {mode === 'edit' ? (
+        <DropSlot parentId={node.id} index={0} position="inside" label="插入到容器顶部" className="child-drop-slot" />
+      ) : null}
+
+      {node.children.map((child, index) => (
+        <div key={child.id} className="container-child-block">
+          <Renderer node={child} selectedId={selectedId} mode={mode} onSelect={onSelect} />
+          {mode === 'edit' ? (
+            <DropSlot
+              parentId={node.id}
+              index={index + 1}
+              position="inside"
+              label={`插入到容器第 ${index + 1} 个组件后`}
+              className="child-drop-slot"
+            />
+          ) : null}
+        </div>
+      ))}
+    </>
+  );
+}
 
 export function Renderer({ node, selectedId, mode = 'edit', onSelect }: RendererProps) {
   if (node.visible === false) return null;
@@ -255,9 +341,9 @@ export function Renderer({ node, selectedId, mode = 'edit', onSelect }: Renderer
             event.stopPropagation();
             if (mode === 'edit') {
               onSelect?.(node.id);
-            } else {
-              runActions(node);
+              return;
             }
+            runActions(node);
           }}
         >
           {String(node.props.text ?? '按钮')}
@@ -269,7 +355,11 @@ export function Renderer({ node, selectedId, mode = 'edit', onSelect }: Renderer
   if (node.type === 'image') {
     return (
       <NodeFrame node={node} mode={mode} selectedId={selectedId} onSelect={onSelect}>
-        <img style={node.style as CSSProperties} src={String(node.props.src ?? '')} alt={String(node.props.alt ?? 'image')} />
+        <img
+          style={node.style as CSSProperties}
+          src={String(node.props.src ?? '')}
+          alt={String(node.props.alt ?? 'image')}
+        />
       </NodeFrame>
     );
   }
@@ -302,10 +392,7 @@ export function Renderer({ node, selectedId, mode = 'edit', onSelect }: Renderer
   }
 
   if (node.type === 'feature-list') {
-    const items = String(node.props.items ?? '')
-      .split('|')
-      .map((item) => item.trim())
-      .filter(Boolean);
+    const items = splitFeatureItems(node.props.items);
 
     return (
       <NodeFrame node={node} mode={mode} selectedId={selectedId} onSelect={onSelect}>
@@ -325,14 +412,7 @@ export function Renderer({ node, selectedId, mode = 'edit', onSelect }: Renderer
   }
 
   if (node.type === 'stat-grid') {
-    const pairs = String(node.props.items ?? '')
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .map((item) => {
-        const [value, label] = item.split('|');
-        return { value: value?.trim() ?? '', label: label?.trim() ?? '' };
-      });
+    const pairs = splitStatItems(node.props.items);
 
     return (
       <NodeFrame node={node} mode={mode} selectedId={selectedId} onSelect={onSelect}>
@@ -358,45 +438,7 @@ export function Renderer({ node, selectedId, mode = 'edit', onSelect }: Renderer
   return (
     <NodeFrame node={node} mode={mode} selectedId={selectedId} onSelect={onSelect}>
       <section style={node.style as CSSProperties}>
-        {mode === 'edit' && node.children?.length ? (
-          <DropSlot
-            parentId={node.id}
-            index={0}
-            position="inside"
-            label="插入到容器顶部"
-            className="child-drop-slot"
-          />
-        ) : null}
-
-        {node.children?.length ? (
-          node.children.map((child, index) => (
-            <div key={child.id} className="container-child-block">
-              <Renderer node={child} selectedId={selectedId} mode={mode} onSelect={onSelect} />
-              {mode === 'edit' ? (
-                <DropSlot
-                  parentId={node.id}
-                  index={index + 1}
-                  position="inside"
-                  label={`插入到容器第 ${index + 1} 个组件后`}
-                  className="child-drop-slot"
-                />
-              ) : null}
-            </div>
-          ))
-        ) : (
-          <>
-            <div className="empty-slot">容器支持嵌套，你可以把左侧物料或现有节点直接拖到这里。</div>
-            {mode === 'edit' ? (
-              <DropSlot
-                parentId={node.id}
-                index={0}
-                position="inside"
-                label="拖到这里放进容器"
-                className="child-drop-slot"
-              />
-            ) : null}
-          </>
-        )}
+        {renderContainerChildren(node, selectedId, mode, onSelect)}
       </section>
     </NodeFrame>
   );

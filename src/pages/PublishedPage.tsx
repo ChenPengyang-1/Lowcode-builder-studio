@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { MutableRefObject } from 'react';
 import { SchemaPreview } from '../components/SchemaPreview';
 import { useEditorStore } from '../store/editorStore';
 import type { SavedTemplate, TemplateSummary } from '../types/schema';
@@ -78,6 +79,40 @@ function getTemplateSourceLabel(source: 'manual' | 'ai' | 'imported' | undefined
   return '手工搭建';
 }
 
+function getAssistantCapabilityLabel(capability: AssistantCapability) {
+  if (capability === 'ai') return 'AI 模式';
+  if (capability === 'fallback') return '引导模式';
+  return '检测中';
+}
+
+function filterAndSortTemplates(
+  templates: TemplateSummary[],
+  keyword: string,
+  sourceFilter: TemplateSourceFilter,
+  sortBy: TemplateSort,
+) {
+  const normalizedKeyword = keyword.trim().toLowerCase();
+
+  return [...templates]
+    .filter((template) =>
+      normalizedKeyword ? template.name.toLowerCase().includes(normalizedKeyword) : true,
+    )
+    .filter((template) =>
+      sourceFilter === 'all' ? true : (template.source ?? 'manual') === sourceFilter,
+    )
+    .sort((left, right) => {
+      if (sortBy === 'name') {
+        return left.name.localeCompare(right.name, 'zh-CN');
+      }
+
+      if (sortBy === 'updated') {
+        return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+      }
+
+      return new Date(right.publishedAt ?? 0).getTime() - new Date(left.publishedAt ?? 0).getTime();
+    });
+}
+
 function buildActionPrompt(messages: ChatMessage[], latestUserText: string, action: 'generate' | 'refine') {
   // 这里会把最近几轮对话重新整理成一段更完整的任务指令，后续生成/修改都基于它继续。
   const recentTranscript = [...messages, { id: 'latest', role: 'user' as const, text: latestUserText }]
@@ -92,6 +127,80 @@ function buildActionPrompt(messages: ChatMessage[], latestUserText: string, acti
     recentTranscript,
     '请综合以上上下文，不要只盯着最后一句话。',
   ].join('\n');
+}
+
+function getAssistantHelperText(options: {
+  assistantCapability: AssistantCapability;
+  assistantMode: AssistantMode;
+  selectedTemplateName: string | null;
+  hasPreviewSchema: boolean;
+}) {
+  const { assistantCapability, assistantMode, selectedTemplateName, hasPreviewSchema } = options;
+
+  if (assistantCapability === 'ai') {
+    if (assistantMode === 'refine') {
+      return selectedTemplateName
+        ? `当前为 AI 模式，我们会像聊天一样围绕“${selectedTemplateName}”继续确认和调整。只有你明确说“按这个改”或直接提出具体改动时，我才会真正更新模板。`
+        : '当前为 AI 模式，先在左侧选择一份模板，我会直接继续修改。';
+    }
+
+    return hasPreviewSchema
+      ? '当前为 AI 模式，已经有一版结果了。你可以继续像聊天一样讨论方向；想让我真正改动时，直接说“按这个改”或给出明确修改要求即可。'
+      : '当前为 AI 模式。你可以先像和 GPT 一样确认目标、模块和风格；只有你明确说“开始生成”时，我才会真正开始构建页面。';
+  }
+
+  if (assistantMode === 'refine') {
+    return selectedTemplateName
+      ? `当前为引导模式，正在围绕“${selectedTemplateName}”继续调整。`
+      : '当前为引导模式，先在左侧选一份模板，我会围绕它继续修改。';
+  }
+
+  return '当前为引导模式。我会先收集页面类型、目标用户、页面模块和整体风格，再生成一版初稿。';
+}
+
+function getPromptPlaceholder(options: {
+  assistantMode: AssistantMode;
+  assistantCapability: AssistantCapability;
+  generateStep: GenerateStep;
+  hasPreviewSchema: boolean;
+}) {
+  const { assistantMode, assistantCapability, generateStep, hasPreviewSchema } = options;
+  const isAiMode = assistantCapability === 'ai';
+
+  if (assistantMode === 'refine') {
+    return isAiMode
+      ? '先像聊天一样说出你的想法，比如“这个首屏有点正式，能再活一点吗”；想让我真正动手时，就直接说“按这个改”'
+      : '继续描述你想怎么改这份模板，比如“表单增加公司规模和预算范围”';
+  }
+
+  if (isAiMode) {
+    return hasPreviewSchema
+      ? '继续像聊天一样讨论或提出修改要求，比如“把首屏做得更有科技感”，确认后再说“按这个改”'
+      : '先像聊天一样描述目标，比如“我想做一个面向企业客户的活动落地页”，确认后再说“开始生成”';
+  }
+
+  if (generateStep === 'scene') return '先告诉我你想生成什么页面';
+  if (generateStep === 'audience') return '告诉我这个页面主要面向谁';
+  if (generateStep === 'modules') return '告诉我页面里最需要哪些模块';
+  if (generateStep === 'style') return '再补充一下整体风格或表单要求';
+  return '继续补充更多要求，我会沿着当前结果继续调整';
+}
+
+function getSubmitButtonText(options: {
+  assistantBusy: boolean;
+  assistantCapability: AssistantCapability;
+  assistantMode: AssistantMode;
+  generateStep: GenerateStep;
+  hasPreviewSchema: boolean;
+}) {
+  const { assistantBusy, assistantCapability, assistantMode, generateStep, hasPreviewSchema } = options;
+
+  if (assistantBusy) return 'AI 处理中...';
+  if (assistantCapability === 'ai') {
+    return hasPreviewSchema ? '发送对话/修改' : '发送对话';
+  }
+  if (assistantMode === 'refine') return '发送修改要求';
+  return generateStep === 'done' ? '补充并重新生成' : '发送回答';
 }
 
 function shouldFallbackToGenerate(text: string) {
@@ -152,13 +261,254 @@ function createRefineWelcome(
   ];
 }
 
+interface TemplateSidebarProps {
+  assistantMode: AssistantMode;
+  selectedTemplateId: string | null;
+  publishedTemplates: TemplateSummary[];
+  filteredPublishedTemplates: TemplateSummary[];
+  templateKeyword: string;
+  templateSourceFilter: TemplateSourceFilter;
+  templateSortBy: TemplateSort;
+  templateCardRefs: MutableRefObject<Record<string, HTMLButtonElement | null>>;
+  onTemplateKeywordChange: (value: string) => void;
+  onTemplateSourceFilterChange: (value: TemplateSourceFilter) => void;
+  onTemplateSortByChange: (value: TemplateSort) => void;
+  onTemplateSelect: (templateId: string) => void;
+  onCreateNew: () => void;
+  onLoadPublishedToEditor: () => void;
+  canLoadPublishedToEditor: boolean;
+}
+
+function PublishedTemplateSidebar({
+  assistantMode,
+  selectedTemplateId,
+  publishedTemplates,
+  filteredPublishedTemplates,
+  templateKeyword,
+  templateSourceFilter,
+  templateSortBy,
+  templateCardRefs,
+  onTemplateKeywordChange,
+  onTemplateSourceFilterChange,
+  onTemplateSortByChange,
+  onTemplateSelect,
+  onCreateNew,
+  onLoadPublishedToEditor,
+  canLoadPublishedToEditor,
+}: TemplateSidebarProps) {
+  return (
+    <aside className="published-sidebar published-sticky-side">
+      <div className="published-toolbar">
+        <div className="published-section-title">模板列表</div>
+        <span className="published-mode-badge">{assistantMode === 'refine' ? '修改模式' : '生成模式'}</span>
+      </div>
+
+      <div className="template-filter-stack published-filter-stack">
+        <input
+          value={templateKeyword}
+          onChange={(event) => onTemplateKeywordChange(event.target.value)}
+          placeholder="搜索模板名称"
+        />
+        <div className="template-filter-row">
+          <select value={templateSortBy} onChange={(event) => onTemplateSortByChange(event.target.value as TemplateSort)}>
+            <option value="published">最近发布</option>
+            <option value="updated">最近更新</option>
+            <option value="name">名称 A-Z</option>
+          </select>
+          <select
+            value={templateSourceFilter}
+            onChange={(event) => onTemplateSourceFilterChange(event.target.value as TemplateSourceFilter)}
+          >
+            <option value="all">全部来源</option>
+            <option value="manual">手工搭建</option>
+            <option value="ai">AI 生成</option>
+            <option value="imported">导入模板</option>
+          </select>
+        </div>
+      </div>
+
+      {filteredPublishedTemplates.length ? (
+        <div className="published-list">
+          {filteredPublishedTemplates.map((template) => (
+            <button
+              key={template.id}
+              ref={(element) => {
+                templateCardRefs.current[template.id] = element;
+              }}
+              type="button"
+              className={`published-card ${assistantMode === 'refine' && template.id === selectedTemplateId ? 'active' : ''}`}
+              onClick={() => onTemplateSelect(template.id)}
+            >
+              <strong>{template.name}</strong>
+              <div className="template-tag-row">
+                <span className="template-source-tag">{getTemplateSourceLabel(template.source)}</span>
+                <span className="template-status-tag">{template.hasPublished ? '已发布' : '草稿'}</span>
+              </div>
+              <span>
+                {template.publishedAt
+                  ? `发布时间：${new Date(template.publishedAt).toLocaleString()}`
+                  : `最近更新：${new Date(template.updatedAt).toLocaleString()}`}
+              </span>
+              <span className="published-card-hint">点击后可继续修改这份模板</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="published-empty">
+          {publishedTemplates.length
+            ? '当前筛选条件下没有匹配的模板。'
+            : '当前还没有模板。可以先在编辑器里发布一份，或者直接使用下方的 AI 生成功能。'}
+        </div>
+      )}
+
+      <div className="published-sidebar-footer">
+        <button
+          type="button"
+          className={`published-secondary-action ${assistantMode === 'generate' ? 'active' : ''}`}
+          onClick={onCreateNew}
+        >
+          新建一版模板
+        </button>
+
+        {canLoadPublishedToEditor ? (
+          <button type="button" onClick={onLoadPublishedToEditor}>
+            载入当前发布版本到编辑器
+          </button>
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
+interface AssistantPanelProps {
+  assistantMode: AssistantMode;
+  assistantCapability: AssistantCapability;
+  selectedTemplateName: string | null;
+  prompt: string;
+  messages: ChatMessage[];
+  assistantBusy: boolean;
+  generateStep: GenerateStep;
+  generateIntent: GenerateIntent;
+  hasPreviewSchema: boolean;
+  onPromptChange: (value: string) => void;
+  onPromptKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onSubmit: () => void;
+  onAbort: () => void;
+  onQuickReply: (text: string) => void;
+}
+
+function AssistantConversationPanel({
+  assistantMode,
+  assistantCapability,
+  selectedTemplateName,
+  prompt,
+  messages,
+  assistantBusy,
+  generateStep,
+  generateIntent,
+  hasPreviewSchema,
+  onPromptChange,
+  onPromptKeyDown,
+  onSubmit,
+  onAbort,
+  onQuickReply,
+}: AssistantPanelProps) {
+  const helperText = getAssistantHelperText({
+    assistantCapability,
+    assistantMode,
+    selectedTemplateName,
+    hasPreviewSchema,
+  });
+  const promptPlaceholder = getPromptPlaceholder({
+    assistantMode,
+    assistantCapability,
+    generateStep,
+    hasPreviewSchema,
+  });
+  const submitButtonText = getSubmitButtonText({
+    assistantBusy,
+    assistantCapability,
+    assistantMode,
+    generateStep,
+    hasPreviewSchema,
+  });
+  const showQuickReplies = assistantCapability === 'fallback';
+  const isAiMode = assistantCapability === 'ai';
+
+  return (
+    <aside className="ai-assistant-panel published-sticky-side">
+      <div className="published-toolbar">
+        <div className="published-section-title">对话修改区</div>
+        <span className="published-mode-badge">{getAssistantCapabilityLabel(assistantCapability)}</span>
+      </div>
+
+      <div className="assistant-helper-text">{helperText}</div>
+
+      <div className="chat-thread">
+        {messages.map((message) => (
+          <div key={message.id} className={`chat-bubble ${message.role}`}>
+            {message.text}
+          </div>
+        ))}
+        {assistantBusy ? (
+          <div className="chat-bubble assistant">
+            {isAiMode ? 'AI 正在处理这条消息，请稍等...' : 'AI 正在分析你的需求并生成新结果，请稍等...'}
+          </div>
+        ) : null}
+      </div>
+
+      {showQuickReplies ? (
+        <div className="quick-reply-row">
+          {(assistantMode === 'refine' ? refineReplies : generateReplies[generateStep]).map((item) => (
+            <button
+              key={item}
+              type="button"
+              className="quick-reply-chip"
+              disabled={assistantBusy}
+              onClick={() => onQuickReply(item)}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {assistantMode === 'generate' && showQuickReplies ? (
+        <div className="assistant-progress">
+          <span className={generateStep === 'scene' ? 'active' : generateIntent.scene ? 'done' : ''}>页面类型</span>
+          <span className={generateStep === 'audience' ? 'active' : generateIntent.audience ? 'done' : ''}>目标用户</span>
+          <span className={generateStep === 'modules' ? 'active' : generateIntent.modules ? 'done' : ''}>页面模块</span>
+          <span className={generateStep === 'style' ? 'active' : generateStep === 'done' ? 'done' : ''}>风格细化</span>
+        </div>
+      ) : null}
+
+      <div className="ai-prompt-box">
+        <textarea
+          value={prompt}
+          onChange={(event) => onPromptChange(event.target.value)}
+          onKeyDown={onPromptKeyDown}
+          placeholder={promptPlaceholder}
+        />
+        <button type="button" onClick={onSubmit} disabled={assistantBusy}>
+          {submitButtonText}
+        </button>
+        {assistantBusy ? (
+          <button type="button" className="published-secondary-action" onClick={onAbort}>
+            停止生成
+          </button>
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
 interface PublishedPageProps {
   currentUser: AuthSession;
 }
 
 export function PublishedPage({ currentUser }: PublishedPageProps) {
   const navigate = useNavigate();
-  const templates = useEditorStore((state) => state.templates as TemplateSummary[]);
+  const templates = useEditorStore((state) => state.templates);
   const loadSchema = useEditorStore((state) => state.loadSchema);
   const loadTemplatePublished = useEditorStore((state) => state.loadTemplatePublished);
   const createTemplateFromSchema = useEditorStore((state) => state.createTemplateFromSchema);
@@ -205,30 +555,10 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
       ),
     [templates, selectedTemplateId],
   );
-  const filteredPublishedTemplates = useMemo(() => {
-    const normalizedKeyword = templateKeyword.trim().toLowerCase();
-
-    return [...publishedTemplates]
-      .filter((template) =>
-        normalizedKeyword ? template.name.toLowerCase().includes(normalizedKeyword) : true,
-      )
-      .filter((template) =>
-        templateSourceFilter === 'all'
-          ? true
-          : (template.source ?? 'manual') === templateSourceFilter,
-      )
-      .sort((left, right) => {
-        if (templateSortBy === 'name') {
-          return left.name.localeCompare(right.name, 'zh-CN');
-        }
-
-        if (templateSortBy === 'updated') {
-          return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
-        }
-
-        return new Date(right.publishedAt ?? 0).getTime() - new Date(left.publishedAt ?? 0).getTime();
-      });
-  }, [publishedTemplates, templateKeyword, templateSourceFilter, templateSortBy]);
+  const filteredPublishedTemplates = useMemo(
+    () => filterAndSortTemplates(publishedTemplates, templateKeyword, templateSourceFilter, templateSortBy),
+    [publishedTemplates, templateKeyword, templateSourceFilter, templateSortBy],
+  );
 
   const selectedTemplate = publishedTemplates.find((item) => item.id === selectedTemplateId) ?? null;
   const selectedTemplateSchema =
@@ -284,6 +614,27 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     );
   };
 
+  const pushSuggestions = (suggestions: string[]) => {
+    if (!suggestions.length) return;
+    pushMessage('assistant', suggestions.join(' '));
+  };
+
+  const openRefineSession = (
+    templateId: string,
+    templateName: string,
+    detail: SavedTemplate | null,
+    schemaSummary: string,
+  ) => {
+    setAssistantMode('refine');
+    setSelectedTemplateId(templateId);
+    setSelectedTemplateDetail(detail);
+    setPrompt('');
+    setPreviousResponseId(null);
+    setGeneratedResult(null);
+    setRefinedResult(null);
+    setMessages(createRefineWelcome(templateName, schemaSummary, assistantCapability));
+  };
+
   const resetToGenerateMode = () => {
     setAssistantMode('generate');
     setSelectedTemplateId(null);
@@ -311,17 +662,10 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     const schema = detail?.publishedSchema ?? detail?.draftSchema;
     if (!schema) return;
 
-    setSelectedTemplateDetail(detail);
-    setAssistantMode('refine');
-    setSelectedTemplateId(templateId);
-    setPrompt('');
-    setPreviousResponseId(null);
-    setGeneratedResult(null);
-    setRefinedResult(null);
-    setMessages(createRefineWelcome(template.name, summarizeSchema(schema), assistantCapability));
+    openRefineSession(templateId, template.name, detail, summarizeSchema(schema));
   };
 
-  const runFallbackGenerate = async (nextIntent: GenerateIntent) => {
+  const runFallbackGenerate = (nextIntent: GenerateIntent) => {
     const fullPrompt = buildGeneratePrompt(nextIntent);
     setAssistantBusy(true);
     const result = generateTemplateFromPrompt(fullPrompt);
@@ -400,9 +744,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
             `真实 AI 当前不稳定，我已切换到本地规则继续生成首版页面：${error instanceof Error ? error.message : '未知错误'}`,
           );
           pushMessage('assistant', fallbackResult.summary);
-          if (fallbackResult.suggestions.length > 0) {
-            pushMessage('assistant', fallbackResult.suggestions.join(' '));
-          }
+          pushSuggestions(fallbackResult.suggestions);
         }
         return;
       }
@@ -421,9 +763,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
           refineMessageId,
           '我已经按刚才确认好的方向更新了当前页面，左侧预览也一起刷新了。你可以继续提想法，我会继续陪你往下调。',
         );
-        if (fallbackResult.suggestions.length > 0) {
-          pushMessage('assistant', fallbackResult.suggestions.join(' '));
-        }
+        pushSuggestions(fallbackResult.suggestions);
       }
     } catch (error) {
       if (isAbortError(error)) {
@@ -440,9 +780,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
           `真实 AI 当前不稳定，我已直接切换到本地规则继续修改当前页面：${error instanceof Error ? error.message : '未知错误'}`,
         );
         pushMessage('assistant', fallbackResult.summary);
-        if (fallbackResult.suggestions.length > 0) {
-          pushMessage('assistant', fallbackResult.suggestions.join(' '));
-        }
+        pushSuggestions(fallbackResult.suggestions);
       } else if (assistantMode === 'generate' && shouldFallbackToGenerate(value)) {
         setAssistantCapability('fallback');
         setPreviousResponseId(null);
@@ -454,9 +792,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
           `真实 AI 当前不稳定，我已直接切换到本地规则生成首版页面：${error instanceof Error ? error.message : '未知错误'}`,
         );
         pushMessage('assistant', fallbackResult.summary);
-        if (fallbackResult.suggestions.length > 0) {
-          pushMessage('assistant', fallbackResult.suggestions.join(' '));
-        }
+        pushSuggestions(fallbackResult.suggestions);
       } else {
         setAssistantMessageText(
           streamMessageId,
@@ -506,7 +842,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     if (generateStep === 'style') {
       const nextIntent = { ...generateIntent, style: value };
       setGenerateIntent(nextIntent);
-      void runFallbackGenerate(nextIntent);
+      runFallbackGenerate(nextIntent);
       return;
     }
 
@@ -516,7 +852,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
     };
     setGenerateIntent(nextIntent);
     pushMessage('assistant', '我会按你刚补充的要求继续调整，并刷新右侧预览。');
-    void runFallbackGenerate(nextIntent);
+    runFallbackGenerate(nextIntent);
   };
 
   const handleRefineConversation = async (content: string) => {
@@ -567,7 +903,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
 
     setRefinedResult(result);
     pushMessage('assistant', result.summary);
-    pushMessage('assistant', result.suggestions.join(' '));
+    pushSuggestions(result.suggestions);
     if (activeStreamControllerRef.current === controller) {
       activeStreamControllerRef.current = null;
     }
@@ -631,9 +967,7 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
 
     lastImportedTemplateIdRef.current = templateId;
     setFileActionMessage('已发布到模板中心，并自动选中当前模板。');
-    setAssistantMode('refine');
-    setSelectedTemplateId(templateId);
-    setSelectedTemplateDetail({
+    const templateDetail: SavedTemplate = {
       id: templateId,
       name: previewSchema.pageMeta.title,
       draftSchema: previewSchema,
@@ -641,14 +975,8 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
       updatedAt: new Date().toISOString(),
       publishedAt: new Date().toISOString(),
       source: 'ai',
-    });
-    setPrompt('');
-    setPreviousResponseId(null);
-    setGeneratedResult(null);
-    setRefinedResult(null);
-    setMessages(
-      createRefineWelcome(previewSchema.pageMeta.title, summarizeSchema(previewSchema), assistantCapability),
-    );
+    };
+    openRefineSession(templateId, previewSchema.pageMeta.title, templateDetail, summarizeSchema(previewSchema));
   };
 
   const handleLoadPublishedToEditor = async () => {
@@ -695,18 +1023,16 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
 
       if (result.ok && result.templateId) {
         lastImportedTemplateIdRef.current = result.templateId;
-        setAssistantMode('refine');
-        setSelectedTemplateId(result.templateId);
-        setSelectedTemplateDetail(result.template ?? null);
-        setPrompt('');
-        setPreviousResponseId(null);
-        setGeneratedResult(null);
-        setRefinedResult(null);
 
         const importedTemplate = result.template ?? null;
         const importedSchema = importedTemplate?.publishedSchema ?? importedTemplate?.draftSchema;
         if (importedTemplate && importedSchema) {
-          setMessages(createRefineWelcome(importedTemplate.name, summarizeSchema(importedSchema), assistantCapability));
+          openRefineSession(
+            result.templateId,
+            importedTemplate.name,
+            importedTemplate,
+            summarizeSchema(importedSchema),
+          );
         } else {
           setMessages([
             {
@@ -876,89 +1202,23 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
       </header>
 
       <div className="published-layout">
-        <aside className="published-sidebar published-sticky-side">
-          <div className="published-toolbar">
-            <div className="published-section-title">模板列表</div>
-            <span className="published-mode-badge">{assistantMode === 'refine' ? '修改模式' : '生成模式'}</span>
-          </div>
-
-          <div className="template-filter-stack published-filter-stack">
-            <input
-              value={templateKeyword}
-              onChange={(event) => setTemplateKeyword(event.target.value)}
-              placeholder="搜索模板名称"
-            />
-            <div className="template-filter-row">
-              <select
-                value={templateSortBy}
-                onChange={(event) => setTemplateSortBy(event.target.value as TemplateSort)}
-              >
-                <option value="published">最近发布</option>
-                <option value="updated">最近更新</option>
-                <option value="name">名称 A-Z</option>
-              </select>
-              <select
-                value={templateSourceFilter}
-                onChange={(event) => setTemplateSourceFilter(event.target.value as TemplateSourceFilter)}
-              >
-                <option value="all">全部来源</option>
-                <option value="manual">手工搭建</option>
-                <option value="ai">AI 生成</option>
-                <option value="imported">导入模板</option>
-              </select>
-            </div>
-          </div>
-
-          {filteredPublishedTemplates.length ? (
-            <div className="published-list">
-              {filteredPublishedTemplates.map((template) => (
-                <button
-                  key={template.id}
-                  ref={(element) => {
-                    templateCardRefs.current[template.id] = element;
-                  }}
-                  type="button"
-                  className={`published-card ${assistantMode === 'refine' && template.id === selectedTemplateId ? 'active' : ''}`}
-                  onClick={() => enterRefineMode(template.id)}
-                >
-                  <strong>{template.name}</strong>
-                  <div className="template-tag-row">
-                    <span className="template-source-tag">{getTemplateSourceLabel(template.source)}</span>
-                    <span className="template-status-tag">{template.hasPublished ? '已发布' : '草稿'}</span>
-                  </div>
-                  <span>
-                    {template.publishedAt
-                      ? `发布时间：${new Date(template.publishedAt).toLocaleString()}`
-                      : `最近更新：${new Date(template.updatedAt).toLocaleString()}`}
-                  </span>
-                  <span className="published-card-hint">点击后可继续修改这份模板</span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="published-empty">
-              {publishedTemplates.length
-                ? '当前筛选条件下没有匹配的模板。'
-                : '当前还没有模板。可以先在编辑器里发布一份，或者直接使用下方的 AI 生成功能。'}
-            </div>
-          )}
-
-          <div className="published-sidebar-footer">
-            <button
-              type="button"
-              className={`published-secondary-action ${assistantMode === 'generate' ? 'active' : ''}`}
-              onClick={resetToGenerateMode}
-            >
-              新建一版模板
-            </button>
-
-            {assistantMode === 'refine' && selectedTemplate?.hasPublished ? (
-              <button type="button" onClick={handleLoadPublishedToEditor}>
-                载入当前发布版本到编辑器
-              </button>
-            ) : null}
-          </div>
-        </aside>
+        <PublishedTemplateSidebar
+          assistantMode={assistantMode}
+          selectedTemplateId={selectedTemplateId}
+          publishedTemplates={publishedTemplates}
+          filteredPublishedTemplates={filteredPublishedTemplates}
+          templateKeyword={templateKeyword}
+          templateSourceFilter={templateSourceFilter}
+          templateSortBy={templateSortBy}
+          templateCardRefs={templateCardRefs}
+          onTemplateKeywordChange={setTemplateKeyword}
+          onTemplateSourceFilterChange={setTemplateSourceFilter}
+          onTemplateSortByChange={setTemplateSortBy}
+          onTemplateSelect={enterRefineMode}
+          onCreateNew={resetToGenerateMode}
+          onLoadPublishedToEditor={handleLoadPublishedToEditor}
+          canLoadPublishedToEditor={assistantMode === 'refine' && Boolean(selectedTemplate?.hasPublished)}
+        />
 
         <main className="published-main">
           {previewSchema ? (
@@ -975,121 +1235,28 @@ export function PublishedPage({ currentUser }: PublishedPageProps) {
           ) : null}
         </main>
 
-        <aside className="ai-assistant-panel published-sticky-side">
-          <div className="published-toolbar">
-            <div className="published-section-title">对话修改区</div>
-            <span className="published-mode-badge">
-              {assistantCapability === 'ai' ? 'AI 模式' : assistantCapability === 'fallback' ? '引导模式' : '检测中'}
-            </span>
-          </div>
-
-          <div className="assistant-helper-text">
-            {assistantCapability === 'ai'
-              ? assistantMode === 'refine'
-                ? selectedTemplate
-                  ? `当前为 AI 模式，我们会像聊天一样围绕“${selectedTemplate.name}”继续确认和调整。只有你明确说“按这个改”或直接提出具体改动时，我才会真正更新模板。`
-                  : '当前为 AI 模式，先在左侧选择一份模板，我会直接继续修改。'
-                : previewSchema
-                  ? '当前为 AI 模式，已经有一版结果了。你可以继续像聊天一样讨论方向；想让我真正改动时，直接说“按这个改”或给出明确修改要求即可。'
-                  : '当前为 AI 模式。你可以先像和 GPT 一样确认目标、模块和风格；只有你明确说“开始生成”时，我才会真正开始构建页面。'
-              : assistantMode === 'refine'
-                ? selectedTemplate
-                  ? `当前为引导模式，正在围绕“${selectedTemplate.name}”继续调整。`
-                  : '当前为引导模式，先在左侧选一份模板，我会围绕它继续修改。'
-                : '当前为引导模式。我会先收集页面类型、目标用户、页面模块和整体风格，再生成一版初稿。'}
-          </div>
-
-          <div className="chat-thread">
-            {messages.map((message) => (
-              <div key={message.id} className={`chat-bubble ${message.role}`}>
-                {message.text}
-              </div>
-            ))}
-            {assistantBusy ? (
-              <div className="chat-bubble assistant">
-                {isAiMode
-                  ? 'AI 正在处理这条消息，请稍等...'
-                  : 'AI 正在分析你的需求并生成新结果，请稍等...'}
-              </div>
-            ) : null}
-          </div>
-
-          {isFallbackMode ? (
-            <div className="quick-reply-row">
-              {(assistantMode === 'refine' ? refineReplies : generateReplies[generateStep]).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  className="quick-reply-chip"
-                  disabled={assistantBusy}
-                  onClick={() => {
-                    if (assistantMode === 'refine') {
-                      void handleRefineConversation(item);
-                    } else {
-                      handleGenerateConversation(item);
-                    }
-                  }}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          {assistantMode === 'generate' && isFallbackMode ? (
-            <div className="assistant-progress">
-              <span className={generateStep === 'scene' ? 'active' : generateIntent.scene ? 'done' : ''}>页面类型</span>
-              <span className={generateStep === 'audience' ? 'active' : generateIntent.audience ? 'done' : ''}>目标用户</span>
-              <span className={generateStep === 'modules' ? 'active' : generateIntent.modules ? 'done' : ''}>页面模块</span>
-              <span className={generateStep === 'style' ? 'active' : generateStep === 'done' ? 'done' : ''}>风格细化</span>
-            </div>
-          ) : null}
-
-          <div className="ai-prompt-box">
-            <textarea
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              onKeyDown={handlePromptKeyDown}
-              placeholder={
-                assistantMode === 'refine'
-                  ? isAiMode
-                    ? '先像聊天一样说出你的想法，比如“这个首屏有点正式，能再活一点吗”；想让我真正动手时，就直接说“按这个改”'
-                      : '继续描述你想怎么改这份模板，比如“表单增加公司规模和预算范围”'
-                    : isAiMode
-                      ? previewSchema
-                        ? '继续像聊天一样讨论或提出修改要求，比如“把首屏做得更有科技感”，确认后再说“按这个改”'
-                        : '先像聊天一样描述目标，比如“我想做一个面向企业客户的活动落地页”，确认后再说“开始生成”'
-                    : generateStep === 'scene'
-                      ? '先告诉我你想生成什么页面'
-                      : generateStep === 'audience'
-                        ? '告诉我这个页面主要面向谁'
-                        : generateStep === 'modules'
-                          ? '告诉我页面里最需要哪些模块'
-                          : generateStep === 'style'
-                            ? '再补充一下整体风格或表单要求'
-                            : '继续补充更多要求，我会沿着当前结果继续调整'
-              }
-            />
-            <button type="button" onClick={handleSubmit} disabled={assistantBusy}>
-              {assistantBusy
-                ? 'AI 处理中...'
-                : isAiMode
-                  ? previewSchema
-                    ? '发送对话/修改'
-                    : '发送对话'
-                  : assistantMode === 'refine'
-                    ? '发送修改要求'
-                    : generateStep === 'done'
-                      ? '补充并重新生成'
-                      : '发送回答'}
-            </button>
-            {assistantBusy ? (
-              <button type="button" className="published-secondary-action" onClick={handleAbortAssistant}>
-                停止生成
-              </button>
-            ) : null}
-          </div>
-        </aside>
+        <AssistantConversationPanel
+          assistantMode={assistantMode}
+          assistantCapability={assistantCapability}
+          selectedTemplateName={selectedTemplate?.name ?? null}
+          prompt={prompt}
+          messages={messages}
+          assistantBusy={assistantBusy}
+          generateStep={generateStep}
+          generateIntent={generateIntent}
+          hasPreviewSchema={Boolean(previewSchema)}
+          onPromptChange={setPrompt}
+          onPromptKeyDown={handlePromptKeyDown}
+          onSubmit={handleSubmit}
+          onAbort={handleAbortAssistant}
+          onQuickReply={(item) => {
+            if (assistantMode === 'refine') {
+              void handleRefineConversation(item);
+            } else {
+              handleGenerateConversation(item);
+            }
+          }}
+        />
       </div>
     </div>
   );

@@ -79,8 +79,17 @@ interface EditorState {
   ) => Promise<string>;
   updateTemplateDraft: (templateId: string) => Promise<void>;
   publishTemplate: (templateId: string) => Promise<void>;
-  importTemplateFile: (text: string) => Promise<{ ok: boolean; message: string; templateId?: string; template?: SavedTemplate }>;
-  exportTemplateFile: (templateId: string) => Promise<{ ok: boolean; message: string; files?: ExportedFileAsset[] }>;
+  importTemplateFile: (text: string) => Promise<{
+    ok: boolean;
+    message: string;
+    templateId?: string;
+    template?: SavedTemplate;
+  }>;
+  exportTemplateFile: (templateId: string) => Promise<{
+    ok: boolean;
+    message: string;
+    files?: ExportedFileAsset[];
+  }>;
   loadTemplateDraft: (templateId: string) => Promise<void>;
   loadTemplatePublished: (templateId: string) => Promise<void>;
   renameTemplate: (templateId: string, name: string) => Promise<void>;
@@ -93,15 +102,17 @@ function cloneSchema(schema: PageSchema): PageSchema {
 
 function loadLegacyTemplates(): SavedTemplate[] {
   if (typeof window === 'undefined') return [];
+
   try {
     const raw = window.localStorage.getItem(TEMPLATE_STORAGE_KEY);
     if (!raw) return [];
+
     const parsed = JSON.parse(raw) as unknown[];
-    return Array.isArray(parsed)
-      ? parsed
-          .map((item) => normalizeTemplateRecord(item))
-          .filter((item): item is SavedTemplate => Boolean(item))
-      : [];
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item) => normalizeTemplateRecord(item))
+      .filter((item): item is SavedTemplate => Boolean(item));
   } catch {
     return [];
   }
@@ -113,9 +124,9 @@ function persistLegacyTemplates(templates: SavedTemplate[]) {
 }
 
 function updateLegacyTemplatesList(updater: (templates: SavedTemplate[]) => SavedTemplate[]) {
-  const next = updater(loadLegacyTemplates());
-  persistLegacyTemplates(next);
-  return next;
+  const nextTemplates = updater(loadLegacyTemplates());
+  persistLegacyTemplates(nextTemplates);
+  return nextTemplates;
 }
 
 function countNodes(nodes: PageNode[]): number {
@@ -143,18 +154,19 @@ function sortTemplateSummaries(templates: TemplateSummary[]) {
 }
 
 function mergeTemplateSummary(templates: TemplateSummary[], summary: TemplateSummary) {
-  const next = templates.filter((item) => item.id !== summary.id);
-  return sortTemplateSummaries([summary, ...next]);
+  const nextTemplates = templates.filter((item) => item.id !== summary.id);
+  return sortTemplateSummaries([summary, ...nextTemplates]);
 }
 
 function buildDetailsMap(templates: SavedTemplate[]) {
-  return templates.reduce<Record<string, SavedTemplate>>((accumulator, template) => {
-    accumulator[template.id] = template;
-    return accumulator;
+  return templates.reduce<Record<string, SavedTemplate>>((result, template) => {
+    result[template.id] = template;
+    return result;
   }, {});
 }
 
-// 默认演示 Schema 会在首次进入编辑器时生成一份完整的落地页骨架。
+// 默认演示 Schema 会在第一次进入编辑器时生成一版完整页面骨架，
+// 让物料区、图层树和属性面板都能立刻进入可操作状态。
 function makeDemoSchema(): PageSchema {
   return {
     version: '3.0.0',
@@ -190,8 +202,10 @@ function applySchemaChange(
   nextSchema: PageSchema,
   patch?: Partial<EditorState>,
 ): Partial<EditorState> {
+  // 所有会改动页面结构的操作都统一走这里，避免各个 action 分散维护 undo / redo。
   const history = pushHistory(state.history, state.schema);
   const future: PageSchema[] = [];
+
   return {
     schema: nextSchema,
     history,
@@ -202,13 +216,15 @@ function applySchemaChange(
 }
 
 function cloneWithNewIds(node: PageNode): PageNode {
-  const next: PageNode = deepCloneNode(node);
-  next.id = createId(node.type);
-  next.name = `${node.name} 副本`;
-  if (next.children?.length) {
-    next.children = next.children.map((child) => cloneWithNewIds(child));
+  const nextNode = deepCloneNode(node);
+  nextNode.id = createId(node.type);
+  nextNode.name = `${node.name} 副本`;
+
+  if (nextNode.children?.length) {
+    nextNode.children = nextNode.children.map((child) => cloneWithNewIds(child));
   }
-  return next;
+
+  return nextNode;
 }
 
 function buildImportedTemplateName(baseName: string, templates: TemplateSummary[]) {
@@ -225,11 +241,11 @@ function buildImportedTemplateName(baseName: string, templates: TemplateSummary[
   }
 
   let index = 2;
-  while (existingNames.has(`${normalizedBase}（导入${index}）`)) {
+  while (existingNames.has(`${normalizedBase}（导入 ${index}）`)) {
     index += 1;
   }
 
-  return `${normalizedBase}（导入${index}）`;
+  return `${normalizedBase}（导入 ${index}）`;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -252,14 +268,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const legacyTemplates = loadLegacyTemplates();
 
     try {
+      // 列表页先拿模板摘要；旧 localStorage 模板只在首次迁移和离线兜底时参与。
       let summaries = await fetchTemplateSummaries();
       if (!summaries.length && legacyTemplates.length) {
         summaries = await bootstrapTemplates(legacyTemplates);
       }
 
       const currentActive = get().activeTemplateId;
-      const nextActive =
-        summaries.find((item) => item.id === currentActive)?.id ?? summaries[0]?.id ?? null;
+      const nextActive = summaries.find((item) => item.id === currentActive)?.id ?? summaries[0]?.id ?? null;
 
       set({
         templates: sortTemplateSummaries(summaries),
@@ -289,6 +305,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
 
     try {
+      // 完整 schema 只在真正进入模板时按需拉取，避免列表页长期挂着所有详情。
       const template = await fetchTemplateDetail(templateId);
       if (!template) return null;
 
@@ -324,6 +341,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   insertMaterial: (type, parentId = null, index) => {
     const material = materialRegistry.find((item) => item.type === type);
     if (!material) return;
+
     set((state) =>
       applySchemaChange(state, {
         ...state.schema,
@@ -410,9 +428,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   duplicateSelected: () => {
     const { selectedId } = get();
     if (!selectedId) return;
+
     set((state) => {
       const target = findNode(state.schema.nodes, selectedId);
       if (!target) return {};
+
       return applySchemaChange(
         state,
         {
@@ -427,6 +447,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   moveSelected: (direction) => {
     const { selectedId } = get();
     if (!selectedId) return;
+
     set((state) =>
       applySchemaChange(state, {
         ...state.schema,
@@ -438,6 +459,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   deleteSelected: () => {
     const { selectedId } = get();
     if (!selectedId) return;
+
     set((state) =>
       applySchemaChange(
         state,
@@ -481,12 +503,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { history, schema, future } = get();
     if (!future.length) return;
 
-    const next = cloneSchema(future[0]);
+    const nextSchema = cloneSchema(future[0]);
     const nextFuture = future.slice(1);
     const nextHistory = [...history, cloneSchema(schema)].slice(-50);
 
     set({
-      schema: next,
+      schema: nextSchema,
       history: nextHistory,
       future: nextFuture,
       selectedId: null,
@@ -503,6 +525,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const parsed = JSON.parse(text) as unknown;
       const normalized = normalizeSchema(parsed);
+
       if (!normalized.ok) {
         return { ok: false, message: getSchemaImportMessage(normalized) };
       }
@@ -522,6 +545,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   loadSchema: (schema, activeTemplateId = null) => {
     const normalized = normalizeSchema(schema, { fallbackTitle: schema.pageMeta?.title });
     if (!normalized.ok) return;
+
     set((state) =>
       applySchemaChange(state, cloneSchema(normalized.schema), {
         selectedId: null,
@@ -556,6 +580,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const saved = await createTemplateRecord(template);
       if (!saved) return;
+
       set((state) => ({
         templates: mergeTemplateSummary(state.templates, toTemplateSummary(saved)),
         activeTemplateId: saved.id,
@@ -593,6 +618,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const saved = await createTemplateRecord(template);
       if (!saved) return '';
+
       set((state) => ({
         templates: mergeTemplateSummary(state.templates, toTemplateSummary(saved)),
         activeTemplateId: saved.id,
@@ -601,6 +627,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           [saved.id]: saved,
         },
       }));
+
       return saved.id;
     } catch {
       const templates = updateLegacyTemplatesList((prev) => [template, ...prev]);
@@ -616,11 +643,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   updateTemplateDraft: async (templateId) => {
     const normalized = normalizeSchema(get().schema, { fallbackTitle: '草稿模板' });
     if (!normalized.ok) return;
-    const current = cloneSchema(normalized.schema);
+
+    const currentSchema = cloneSchema(normalized.schema);
 
     try {
-      const updated = await updateTemplateDraftRecord(templateId, current);
+      const updated = await updateTemplateDraftRecord(templateId, currentSchema);
       if (!updated) return;
+
       set((state) => ({
         templates: mergeTemplateSummary(state.templates, toTemplateSummary(updated)),
         activeTemplateId: templateId,
@@ -635,13 +664,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           item.id === templateId
             ? {
                 ...item,
-                draftSchema: current,
+                draftSchema: currentSchema,
                 updatedAt: new Date().toISOString(),
                 source: item.source ?? 'manual',
               }
             : item,
         ),
       );
+
       set({
         templates: sortTemplateSummaries(templates.map((item) => toTemplateSummary(item))),
         activeTemplateId: templateId,
@@ -653,11 +683,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   publishTemplate: async (templateId) => {
     const normalized = normalizeSchema(get().schema, { fallbackTitle: '发布模板' });
     if (!normalized.ok) return;
-    const current = cloneSchema(normalized.schema);
+
+    const currentSchema = cloneSchema(normalized.schema);
 
     try {
-      const updated = await publishTemplateRecord(templateId, current);
+      const updated = await publishTemplateRecord(templateId, currentSchema);
       if (!updated) return;
+
       set((state) => ({
         templates: mergeTemplateSummary(state.templates, toTemplateSummary(updated)),
         activeTemplateId: templateId,
@@ -672,8 +704,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           item.id === templateId
             ? {
                 ...item,
-                draftSchema: current,
-                publishedSchema: cloneSchema(current),
+                draftSchema: currentSchema,
+                publishedSchema: cloneSchema(currentSchema),
                 updatedAt: new Date().toISOString(),
                 publishedAt: new Date().toISOString(),
                 source: item.source ?? 'manual',
@@ -681,6 +713,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             : item,
         ),
       );
+
       set({
         templates: sortTemplateSummaries(templates.map((item) => toTemplateSummary(item))),
         activeTemplateId: templateId,
@@ -745,6 +778,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             activeTemplateId: nextTemplate.id,
             templateDetails: buildDetailsMap(templates),
           });
+
           return {
             ok: true,
             message: '模板文件导入成功。',
@@ -797,6 +831,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           activeTemplateId: nextTemplate.id,
           templateDetails: buildDetailsMap(templates),
         });
+
         return {
           ok: true,
           message: 'Schema 文件导入成功，已创建为草稿模板。',
@@ -817,7 +852,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     return {
       ok: true,
-      message: '模板 JSON 与页面 HTML 已生成。',
+      message: '模板 JSON 和页面 HTML 已生成。',
       files: [
         {
           filename: buildTemplateExportFilename(template),
@@ -832,8 +867,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   loadTemplateDraft: async (templateId) => {
     const template = await get().getTemplateDetail(templateId);
     if (!template) return;
+
     const normalized = normalizeSchema(template.draftSchema, { fallbackTitle: template.name });
     if (!normalized.ok) return;
+
     set((state) =>
       applySchemaChange(state, cloneSchema(normalized.schema), {
         selectedId: null,
@@ -845,8 +882,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   loadTemplatePublished: async (templateId) => {
     const template = await get().getTemplateDetail(templateId);
     if (!template?.publishedSchema) return;
+
     const normalized = normalizeSchema(template.publishedSchema, { fallbackTitle: template.name });
     if (!normalized.ok) return;
+
     set((state) =>
       applySchemaChange(state, cloneSchema(normalized.schema), {
         selectedId: null,
@@ -862,6 +901,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const updatedSummary = await renameTemplateRecord(templateId, nextName);
       if (!updatedSummary) return;
+
       set((state) => ({
         templates: mergeTemplateSummary(state.templates, updatedSummary),
         templateDetails: state.templateDetails[templateId]
@@ -881,6 +921,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           item.id === templateId ? { ...item, name: nextName, updatedAt: new Date().toISOString() } : item,
         ),
       );
+
       set({
         templates: sortTemplateSummaries(templates.map((item) => toTemplateSummary(item))),
         templateDetails: buildDetailsMap(templates),
@@ -895,6 +936,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const nextTemplates = state.templates.filter((item) => item.id !== templateId);
         const nextDetails = { ...state.templateDetails };
         delete nextDetails[templateId];
+
         return {
           templates: nextTemplates,
           templateDetails: nextDetails,
