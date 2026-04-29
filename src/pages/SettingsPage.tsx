@@ -28,7 +28,7 @@ export function SettingsPage({ currentUser, themeMode, onThemeChange }: Settings
             onClick={() => onThemeChange('dark')}
           >
             <strong>深色模式</strong>
-            <span>更适合当前后台和编辑器的视觉风格。</span>
+            <span>更适合编辑器和后台工作台这种长时间使用的界面。</span>
           </button>
           <button
             type="button"
@@ -36,7 +36,7 @@ export function SettingsPage({ currentUser, themeMode, onThemeChange }: Settings
             onClick={() => onThemeChange('light')}
           >
             <strong>浅色模式</strong>
-            <span>更适合突出页面层级和卡片结构，整体会更明亮一些。</span>
+            <span>页面层级会更清楚一些，看模板和卡片内容也更轻松。</span>
           </button>
         </div>
       </section>
@@ -68,25 +68,28 @@ export function SettingsPage({ currentUser, themeMode, onThemeChange }: Settings
 
       <section className="settings-card">
         <div className="dashboard-panel-head">
-          <h3>项目状态</h3>
-          <span>Project</span>
+          <h3>项目说明</h3>
+          <span>About</span>
         </div>
         <div className="settings-list">
           <div>
-            <strong>Schema 当前版本</strong>
+            <strong>Schema 版本</strong>
             <span>{CURRENT_SCHEMA_VERSION}</span>
           </div>
           <div>
             <strong>登录方式</strong>
-            <span>前端模拟账号密码登录，本地持久化会话</span>
+            <span>当前是前端模拟登录，登录状态会保存在本地。</span>
           </div>
           <div>
             <strong>模板存储</strong>
-            <span>SQLite + 本地运行时缓存</span>
+            <span>模板资产走 SQLite，前端只保留当前编辑和列表缓存。</span>
           </div>
           <div>
             <strong>项目定位</strong>
-            <span>用于展示页面编辑、模板流转和对话生成的前端项目</span>
+            <span>
+              这个项目主要是在做一个低代码页面搭建工作台，重点放在页面编辑、模板沉淀、导入导出和 AI
+              对话式修改这几条链路上。
+            </span>
           </div>
         </div>
       </section>
