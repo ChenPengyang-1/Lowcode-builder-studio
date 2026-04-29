@@ -28,7 +28,7 @@ export function SettingsPage({ currentUser, themeMode, onThemeChange }: Settings
             onClick={() => onThemeChange('dark')}
           >
             <strong>深色模式</strong>
-            <span>更适合编辑器和后台工作台这种长时间使用的界面。</span>
+            <span>更适合编辑器和后台这类需要长时间盯着看的界面。</span>
           </button>
           <button
             type="button"
@@ -36,7 +36,7 @@ export function SettingsPage({ currentUser, themeMode, onThemeChange }: Settings
             onClick={() => onThemeChange('light')}
           >
             <strong>浅色模式</strong>
-            <span>页面层级会更清楚一些，看模板和卡片内容也更轻松。</span>
+            <span>页面层级会更清楚，看模板和卡片内容也会更轻松一些。</span>
           </button>
         </div>
       </section>
@@ -78,7 +78,7 @@ export function SettingsPage({ currentUser, themeMode, onThemeChange }: Settings
           </div>
           <div>
             <strong>登录方式</strong>
-            <span>当前是前端模拟登录，登录状态会保存在本地。</span>
+            <span>现在是前端模拟登录，登录状态会保存在本地。</span>
           </div>
           <div>
             <strong>模板存储</strong>
@@ -87,8 +87,8 @@ export function SettingsPage({ currentUser, themeMode, onThemeChange }: Settings
           <div>
             <strong>项目定位</strong>
             <span>
-              这个项目主要是在做一个低代码页面搭建工作台，重点放在页面编辑、模板沉淀、导入导出和 AI
-              对话式修改这几条链路上。
+              这个项目主要是在做一个低代码页面搭建工作台，重点放在页面编辑、模板保存和发布、导入导出，还有
+              AI 对话式生成和修改这几条链路上。
             </span>
           </div>
         </div>
