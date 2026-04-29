@@ -31,9 +31,17 @@ const SettingsPage = lazy(() =>
 function RouteLoading() {
   return (
     <div className="route-loading">
-      <span>正在加载页面模块...</span>
+      <span>Loading page module...</span>
     </div>
   );
+}
+
+function getRouteFromPath(pathname: string): AppRoute | 'login' {
+  if (pathname.startsWith('/dashboard')) return 'dashboard';
+  if (pathname.startsWith('/published')) return 'published';
+  if (pathname.startsWith('/settings')) return 'settings';
+  if (pathname.startsWith('/login')) return 'login';
+  return 'editor';
 }
 
 function renderProtectedRoute(
@@ -56,14 +64,6 @@ function renderProtectedRoute(
   );
 }
 
-function getRouteFromPath(pathname: string): AppRoute | 'login' {
-  if (pathname.startsWith('/dashboard')) return 'dashboard';
-  if (pathname.startsWith('/published')) return 'published';
-  if (pathname.startsWith('/settings')) return 'settings';
-  if (pathname.startsWith('/login')) return 'login';
-  return 'editor';
-}
-
 function ProtectedApp({
   authSession,
   themeMode,
@@ -80,6 +80,10 @@ function ProtectedApp({
   const route = getRouteFromPath(location.pathname) as AppRoute;
   const hydrateTemplates = useEditorStore((state) => state.hydrateTemplates);
 
+  useEffect(() => {
+    void hydrateTemplates();
+  }, [hydrateTemplates]);
+
   const handleToggleTheme = () => {
     onThemeChange(themeMode === 'dark' ? 'light' : 'dark');
   };
@@ -87,10 +91,6 @@ function ProtectedApp({
   const handleNavigate = (nextRoute: AppRoute) => {
     navigate(`/${nextRoute}`);
   };
-
-  useEffect(() => {
-    void hydrateTemplates();
-  }, [hydrateTemplates]);
 
   const content = useMemo(() => {
     if (route === 'dashboard') {
@@ -165,14 +165,23 @@ export default function App() {
   return (
     <Suspense fallback={<RouteLoading />}>
       <Routes>
+        <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
         <Route
-          path="/login"
-          element={<LoginPage onLogin={handleLogin} />}
+          path="/dashboard"
+          element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)}
         />
-        <Route path="/dashboard" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
-        <Route path="/editor" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
-        <Route path="/published" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
-        <Route path="/settings" element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)} />
+        <Route
+          path="/editor"
+          element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)}
+        />
+        <Route
+          path="/published"
+          element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)}
+        />
+        <Route
+          path="/settings"
+          element={renderProtectedRoute(authSession, themeMode, handleLogout, handleThemeChange)}
+        />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </Suspense>

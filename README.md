@@ -1,6 +1,6 @@
 ﻿# lowcode-builder-studio
 
-一个基于 `React + TypeScript + Zustand + React Router + Node.js` 的低代码页面搭建平台示例项目，支持页面可视化编辑、模板保存发布、模板导入导出，以及 AI 对话式生成与修改。
+一个基于 `React + TypeScript + Zustand + React Router + Node.js + SQLite` 的低代码页面搭建平台示例项目，支持页面可视化编辑、模板保存发布、模板导入导出，以及 AI 对话式生成与修改。
 
 ## 项目功能
 
@@ -20,8 +20,10 @@
 - TypeScript
 - Zustand
 - React Router（BrowserRouter）
+- dnd-kit
 - Node.js
 - Express
+- SQLite
 - OpenAI SDK
 - Vite
 
@@ -35,9 +37,12 @@
 - `/published` 模板发布与修改
 - `/settings` 系统设置
 
-### AI 服务接口
+### 后端接口
 
 - `GET /api/health` AI 服务状态检查
+- `GET /api/templates` 模板摘要列表
+- `GET /api/templates/:id` 模板详情
+- `POST /api/templates` 新建模板
 - `POST /api/ai/template/chat` AI 对话接口
 - `POST /api/ai/template/generate` AI 生成接口
 - `POST /api/ai/template/refine` AI 修改接口
@@ -59,8 +64,6 @@ lowcode-builder-studio/
 ├─ server/
 │  ├─ prompts/
 │  ├─ services/
-│  ├─ shared/
-│  ├─ utils/
 │  └─ index.mjs
 ├─ public/
 │  └─ 404.html
@@ -89,6 +92,7 @@ lowcode-builder-studio/
 - 中间画布编辑与预览切换
 - 右侧图层树与属性配置
 - 支持撤销、重做、复制、删除、导入导出
+- 当前页面结构由 `Schema` 驱动渲染
 
 ### 模板系统
 
@@ -100,6 +104,8 @@ lowcode-builder-studio/
 - 按手工搭建 / AI 生成 / 文件导入筛选来源
 - 模板 JSON 导入导出
 - 页面 HTML 导出
+- 模板数据持久化到 SQLite
+- 列表页只拉模板摘要，点击模板时再按需加载完整 `Schema`
 
 ### AI 模块
 
@@ -107,6 +113,7 @@ lowcode-builder-studio/
 - 后端通过 `Node.js + Express` 封装 AI 接口
 - 接入真实 AI 完成聊天、生成与修改
 - `chat / generate / refine` 支持 SSE 流式反馈
+- `chat` 负责意图识别，`generate` 负责整页生成，`refine` 负责基于当前页面继续修改
 - 接口异常时回退到本地规则兜底方案
 
 ## 本地运行
@@ -140,7 +147,7 @@ npm run dev
 npm run dev:client
 ```
 
-### 4. 启动 AI 服务
+### 4. 启动服务端
 
 ```bash
 npm run dev:server
@@ -162,5 +169,7 @@ npm run preview
 
 - 项目路由当前采用 `BrowserRouter`
 - 已补充静态托管场景下的 `404.html` 回退页，减少刷新子路由时出现 404 的问题
-- 模板数据默认保存在浏览器本地存储中
+- 模板资产现在默认保存在 SQLite 中，前端只缓存模板摘要和按需加载的详情
+- Zustand 主要负责编辑器运行时状态，如当前 `schema`、选中节点和撤销重做栈
 - AI 接口不可用时，系统会自动切换到本地引导模式
+- `undo / redo` 仍然是前端内存态，不会写入 SQLite

@@ -2,7 +2,7 @@
   "name": "lowcode-builder-studio",
   "private": true,
   "version": "0.0.1",
-  "description": "A schema-driven low-code page builder studio with template management and AI-assisted generation.",
+  "description": "A schema-driven low-code page builder with template persistence, visual editing, and AI-assisted generation.",
   "type": "module",
   "scripts": {
     "dev": "vite",
